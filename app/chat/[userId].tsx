@@ -36,7 +36,9 @@ type Reaccion = {
   emoji: string
 }
 
-type TipoMensaje = 'texto' | 'imagen' | 'gif' | 'invitacion_timba' | 'invitacion_poker'
+type TipoMensaje = 'texto' | 'imagen' | 'gif' | 'invitacion_timba' | 'invitacion_poker' | 'invitacion_truco'
+
+type EstadoBloqueo = 'ninguno' | 'bloqueaste' | 'te_bloqueo'
 
 type Mensaje = {
   id: string
@@ -89,6 +91,8 @@ export default function ChatScreen() {
 
   const [mostrarTimbas, setMostrarTimbas] = useState(false)
   const [timbas, setTimbas] = useState<TimbaSimple[]>([])
+  const [mostrarTruco, setMostrarTruco] = useState(false)
+  const [bloqueo, setBloqueo] = useState<EstadoBloqueo>('ninguno')
 
   const [modoSeleccion, setModoSeleccion] = useState(false)
   const [seleccionados, setSeleccionados] = useState<Set<string>>(new Set())
@@ -155,6 +159,10 @@ export default function ChatScreen() {
         .select('mensaje_id')
         .eq('usuario_id', myId),
     ])
+
+    // Estado de bloqueo (para el aviso y deshabilitar el envío)
+    const { data: bloqueoData } = await supabase.rpc('estado_bloqueo', { p_otro: amigoId })
+    setBloqueo((bloqueoData as EstadoBloqueo) ?? 'ninguno')
 
     setAmigo(amigoData)
 
@@ -409,6 +417,55 @@ export default function ChatScreen() {
     await supabase.from('amistades').update({ [campoFavorito]: nuevoVal }).eq('id', amistadId)
   }
 
+  async function desbloquear() {
+    const { error } = await supabase
+      .from('bloqueados')
+      .delete()
+      .eq('bloqueador_id', myId)
+      .eq('bloqueado_id', amigoId)
+    if (error) { Alert.alert('Error', mensajeError(error)); return }
+    setBloqueo('ninguno')
+    setToast({ titulo: 'Usuario desbloqueado', subtitulo: 'Ya pueden volver a chatear.' })
+  }
+
+  // Crea la partida de Truco en estado 'esperando' (igual que el lobby del juego)
+  // y manda la invitación como mensaje. El otro la acepta desde el lobby.
+  async function enviarInvitacionTruco(conFlor: boolean) {
+    setMostrarTruco(false)
+
+    const { data: partida, error: errPartida } = await supabase
+      .from('truco_partidas')
+      .insert({ jugador1: myId, jugador2: amigoId, con_flor: conFlor })
+      .select('id')
+      .single()
+    if (errPartida || !partida) {
+      Alert.alert('Error', 'No se pudo crear la partida de Truco.')
+      return
+    }
+
+    const contenido = JSON.stringify({ partidaId: partida.id, conFlor })
+    const tempId = `temp_${Date.now()}`
+    setMensajes(prev => [{
+      id: tempId, emisor_id: myId, receptor_id: amigoId,
+      tipo: 'invitacion_truco', contenido,
+      leido: false, created_at: new Date().toISOString(), reacciones: [],
+    }, ...prev])
+
+    const { data, error } = await supabase
+      .from('mensajes')
+      .insert({ emisor_id: myId, receptor_id: amigoId, tipo: 'invitacion_truco', contenido })
+      .select('*')
+      .single()
+
+    if (error) {
+      Alert.alert('Error al enviar', mensajeError(error))
+      setMensajes(prev => prev.filter(m => m.id !== tempId))
+      await supabase.from('truco_partidas').delete().eq('id', partida.id).eq('estado', 'esperando')
+    } else {
+      setMensajes(prev => prev.map(m => m.id === tempId ? { ...data, reacciones: [] } : m))
+    }
+  }
+
   function abrirMenuContexto(mensajeId: string, esMio: boolean) {
     setModoSeleccion(true)
     setSeleccionados(prev => {
@@ -629,7 +686,30 @@ export default function ChatScreen() {
           }
         />
 
-        {/* ── Input bar ── */}
+        {/* ── Input bar (o aviso de bloqueo) ── */}
+        {bloqueo !== 'ninguno' ? (
+          <View style={[es.inputBar, { borderTopColor: c.borde, paddingBottom: Math.max(insets.bottom, 12), alignItems: 'center' }]}>
+            <View style={{ flex: 1, gap: 2 }}>
+              <Text style={{ color: c.texto, fontSize: 14, fontWeight: '700' }}>
+                {bloqueo === 'te_bloqueo' ? 'Este usuario te bloqueó' : 'Bloqueaste a este usuario'}
+              </Text>
+              <Text style={{ color: c.textoSuave, fontSize: 12 }}>
+                {bloqueo === 'te_bloqueo'
+                  ? 'No podés enviarle mensajes ni invitaciones.'
+                  : 'No pueden enviarse mensajes ni invitaciones.'}
+              </Text>
+            </View>
+            {bloqueo === 'bloqueaste' && (
+              <TouchableOpacity
+                onPress={desbloquear}
+                style={{ backgroundColor: c.primario, paddingHorizontal: 14, paddingVertical: 9, borderRadius: 12 }}
+                activeOpacity={0.8}
+              >
+                <Text style={{ color: c.fondo, fontWeight: '700', fontSize: 13 }}>Desbloquear</Text>
+              </TouchableOpacity>
+            )}
+          </View>
+        ) : (
         <View style={[es.inputBar, { borderTopColor: c.borde, paddingBottom: Math.max(insets.bottom, 12) }]}>
           <TouchableOpacity
             onPress={() => setMostrarGiphy(true)}
@@ -650,6 +730,13 @@ export default function ChatScreen() {
             hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
           >
             <AppIcon name="timba" size={24} color={c.textoSuave} />
+          </TouchableOpacity>
+
+          <TouchableOpacity
+            onPress={() => setMostrarTruco(true)}
+            hitSlop={{ top: 8, bottom: 8, left: 4, right: 4 }}
+          >
+            <AppIcon name="machoEspada" size={24} color={c.textoSuave} />
           </TouchableOpacity>
 
           <TextInput
@@ -677,6 +764,7 @@ export default function ChatScreen() {
             </Text>
           </TouchableOpacity>
         </View>
+        )}
       </KeyboardAvoidingView>
 
       {/* ── Menú de contexto de mensaje ── */}
@@ -1018,6 +1106,48 @@ export default function ChatScreen() {
         </Pressable>
       </Modal>
 
+      {/* ── Truco invite modal ── */}
+      <Modal visible={mostrarTruco} animationType="slide" transparent onRequestClose={() => setMostrarTruco(false)}>
+        <Pressable
+          style={{ flex: 1, backgroundColor: 'rgba(0,0,0,0.5)', justifyContent: 'flex-end' }}
+          onPress={() => setMostrarTruco(false)}
+        >
+          <Pressable>
+            <View style={[es.sheet, { backgroundColor: c.fondoCard, paddingBottom: Math.max(insets.bottom, 20) }]}>
+              <View style={{ width: 36, height: 4, backgroundColor: c.borde, borderRadius: 2, alignSelf: 'center', marginBottom: 16 }} />
+              <Text style={[es.sheetTitulo, { color: c.texto }]}>Invitar al Truco</Text>
+              <Text style={{ color: c.textoSuave, fontSize: 13, marginBottom: 8 }}>
+                Elegí las reglas y le llega la invitación al chat
+              </Text>
+              <TouchableOpacity
+                style={[es.timbaRow, { borderColor: c.borde }]}
+                onPress={() => enviarInvitacionTruco(true)}
+                activeOpacity={0.7}
+              >
+                <AppIcon name="machoEspada" size={20} color={c.primario} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: c.texto, fontWeight: '700', fontSize: 15 }}>Con flor</Text>
+                  <Text style={{ color: c.textoSuave, fontSize: 12 }}>Se juega con flor y contraflor</Text>
+                </View>
+                <Text style={{ color: c.primario, fontWeight: '600', fontSize: 13 }}>Invitar →</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[es.timbaRow, { borderColor: c.borde }]}
+                onPress={() => enviarInvitacionTruco(false)}
+                activeOpacity={0.7}
+              >
+                <AppIcon name="machoEspada" size={20} color={c.textoSuave} />
+                <View style={{ flex: 1 }}>
+                  <Text style={{ color: c.texto, fontWeight: '700', fontSize: 15 }}>Sin flor</Text>
+                  <Text style={{ color: c.textoSuave, fontSize: 12 }}>Clásico, sin flor</Text>
+                </View>
+                <Text style={{ color: c.primario, fontWeight: '600', fontSize: 13 }}>Invitar →</Text>
+              </TouchableOpacity>
+            </View>
+          </Pressable>
+        </Pressable>
+      </Modal>
+
       {/* ── 3-dot Menu ── */}
       <Modal visible={mostrarMenu} animationType="fade" transparent onRequestClose={() => setMostrarMenu(false)}>
         <Pressable
@@ -1071,9 +1201,14 @@ export default function ChatScreen() {
         onClose={() => setConfirmBloquear(false)}
         onConfirmar={async () => {
           setConfirmBloquear(false)
-          await supabase.from('bloqueados').insert({ bloqueador_id: myId, bloqueado_id: amigoId })
+          const { error } = await supabase.from('bloqueados').insert({ bloqueador_id: myId, bloqueado_id: amigoId })
+          if (error) {
+            // La BD rechaza el bloqueo si hay deudas pendientes entre ambos
+            Alert.alert('No se pudo bloquear', mensajeError(error))
+            return
+          }
           if (amistadId) await supabase.from('amistades').delete().eq('id', amistadId)
-          router.back()
+          setBloqueo('bloqueaste')
         }}
         titulo="Bloquear usuario"
         descripcion={`¿Querés bloquear a ${amigo?.nombre ?? ''}? Se eliminará la amistad y dejarán de ver el contenido del otro.`}
@@ -1169,7 +1304,7 @@ function BurbujaMensaje({ m, mio, hora, myId, seleccionado, modoSeleccion, onPre
                 padding: m.tipo === 'texto' ? 10 : 4,
               },
               miBurbuja,
-              (m.tipo === 'invitacion_timba' || m.tipo === 'invitacion_poker') && { padding: 10 },
+              (m.tipo === 'invitacion_timba' || m.tipo === 'invitacion_poker' || m.tipo === 'invitacion_truco') && { padding: 10 },
             ]}
           >
             {m.tipo === 'texto' && (
@@ -1232,6 +1367,36 @@ function BurbujaMensaje({ m, mio, hora, myId, seleccionado, modoSeleccion, onPre
                       activeOpacity={0.8}
                     >
                       <Text style={{ color: c.fondo, fontSize: 13, fontWeight: '700' }}>Unirse</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )
+            })()}
+
+            {m.tipo === 'invitacion_truco' && (() => {
+              let conFlor = false
+              try { conFlor = !!JSON.parse(m.contenido ?? '{}').conFlor } catch {}
+              return (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, width: 230 }}>
+                  <AppIcon name="machoEspada" size={26} color={mio ? c.fondoCard : c.primario} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: mio ? c.fondo : c.texto, fontWeight: '800', fontSize: 14 }}>
+                      Partida de Truco
+                    </Text>
+                    <Text style={{ color: mio ? c.primarioSuave : c.textoSuave, fontSize: 12 }}>
+                      {conFlor ? 'Con flor' : 'Sin flor'} · Invitación
+                    </Text>
+                  </View>
+                  {!mio && (
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: c.primario,
+                        paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10,
+                      }}
+                      onPress={() => router.push('/juegos/truco-juego' as any)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ color: c.fondo, fontSize: 13, fontWeight: '700' }}>Jugar</Text>
                     </TouchableOpacity>
                   )}
                 </View>

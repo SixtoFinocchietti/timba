@@ -65,7 +65,7 @@ export interface Participante {
   usuario?: Usuario
 }
 
-export type TipoMensaje = 'texto' | 'imagen' | 'gif' | 'invitacion_timba'
+export type TipoMensaje = 'texto' | 'imagen' | 'gif' | 'invitacion_timba' | 'invitacion_poker' | 'invitacion_truco'
 
 export interface ReaccionMensaje {
   id: string

@@ -33,6 +33,7 @@ const MENSAJES: Record<string, string> = {
   'monto_fuera_de_rango':             'El monto está fuera de los límites de la timba.',
   'sin_propuesta':                    'No hay ningún resultado propuesto para confirmar.',
   'transicion_invalida':              'Esa acción no está permitida en este estado.',
+  'deudas_pendientes':                'No se puede bloquear: tienen deudas pendientes entre ustedes. Salden las deudas primero.',
 }
 
 export function mensajeError(error: unknown, fallback = 'Ocurrió un error. Intentá de nuevo.'): string {

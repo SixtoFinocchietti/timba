@@ -464,6 +464,22 @@ export default function Perfil() {
         <Text style={{ color: c.textoSuave, fontSize: 18 }}>›</Text>
       </TouchableOpacity>
 
+      {/* Usuarios bloqueados */}
+      <TouchableOpacity
+        style={[es.btnSaldos, { backgroundColor: c.fondoCard, borderColor: c.borde }]}
+        onPress={() => router.push('/bloqueados' as any)}
+        activeOpacity={0.8}
+      >
+        <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10 }}>
+          <AppIcon name="rechazar" size={22} color={c.primario} />
+          <View>
+            <Text style={{ color: c.texto, fontSize: 16, fontWeight: '700' }}>Usuarios bloqueados</Text>
+            <Text style={{ color: c.textoSuave, fontSize: 12 }}>Ver y desbloquear</Text>
+          </View>
+        </View>
+        <Text style={{ color: c.textoSuave, fontSize: 18 }}>›</Text>
+      </TouchableOpacity>
+
       {/* Historial de timbas */}
       {historial.length > 0 && (
         <View style={[es.card, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>

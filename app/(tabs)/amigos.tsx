@@ -201,10 +201,15 @@ export default function Amigos() {
 
   async function ejecutarBloqueo(item: AmigoItem) {
     setConfirmBloquear(null)
-    await supabase.from('bloqueados').insert({
+    const { error } = await supabase.from('bloqueados').insert({
       bloqueador_id: userId,
       bloqueado_id: item.amigo.id,
     })
+    if (error) {
+      // La BD rechaza el bloqueo si hay deudas pendientes entre ambos
+      Alert.alert('No se pudo bloquear', mensajeError(error))
+      return
+    }
     await supabase.from('amistades').delete().eq('id', item.amistadId)
     setAmigos(prev => prev.filter(a => a.amistadId !== item.amistadId))
     setToast({ titulo: 'Usuario bloqueado', subtitulo: `Se eliminó la amistad con ${item.amigo.nombre.split(' ')[0]}.` })
