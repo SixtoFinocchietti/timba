@@ -939,21 +939,25 @@ export default function TrucoJuego() {
   async function cargarAmigos() {
     if (!usuario?.id) { setCargando(false); return }
     setCargando(true)
-    const { data } = await supabase
-      .from('amistades')
-      .select(`
-        solicitante:usuarios_publicos!amistades_solicitante_id_fkey(id, nombre),
-        receptor:usuarios_publicos!amistades_receptor_id_fkey(id, nombre)
-      `)
-      .eq('estado', 'aceptada')
-      .or(`solicitante_id.eq.${usuario.id},receptor_id.eq.${usuario.id}`)
+    const [{ data }, { data: bloqueadosData }] = await Promise.all([
+      supabase
+        .from('amistades')
+        .select(`
+          solicitante:usuarios_publicos!amistades_solicitante_id_fkey(id, nombre),
+          receptor:usuarios_publicos!amistades_receptor_id_fkey(id, nombre)
+        `)
+        .eq('estado', 'aceptada')
+        .or(`solicitante_id.eq.${usuario.id},receptor_id.eq.${usuario.id}`),
+      supabase.from('bloqueados').select('bloqueado_id').eq('bloqueador_id', usuario.id),
+    ])
 
     if (data) {
+      const bloqueados = new Set((bloqueadosData ?? []).map((b: any) => b.bloqueado_id as string))
       const lista: Amigo[] = data.map((row: any) => {
         const esSolicitante = row.solicitante?.id === usuario.id
         const amigo = esSolicitante ? row.receptor : row.solicitante
         return { id: amigo?.id ?? '', nombre: amigo?.nombre ?? '' }
-      }).filter(a => a.id)
+      }).filter(a => a.id && !bloqueados.has(a.id))
       setAmigos(lista)
     }
     setCargando(false)

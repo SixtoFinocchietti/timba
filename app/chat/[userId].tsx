@@ -1207,11 +1207,11 @@ export default function ChatScreen() {
             Alert.alert('No se pudo bloquear', mensajeError(error))
             return
           }
-          if (amistadId) await supabase.from('amistades').delete().eq('id', amistadId)
+          // La amistad se conserva: al desbloquear vuelve todo a la normalidad
           setBloqueo('bloqueaste')
         }}
         titulo="Bloquear usuario"
-        descripcion={`¿Querés bloquear a ${amigo?.nombre ?? ''}? Se eliminará la amistad y dejarán de ver el contenido del otro.`}
+        descripcion={`¿Querés bloquear a ${amigo?.nombre ?? ''}? No van a poder chatear ni invitarse a jugar mientras dure el bloqueo. La amistad se conserva y al desbloquear vuelve todo a la normalidad.`}
         nombre={amigo?.nombre ?? ''}
         avatar_url={amigo?.avatar_url}
         labelConfirmar="Bloquear"

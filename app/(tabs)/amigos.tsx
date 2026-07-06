@@ -58,7 +58,7 @@ export default function Amigos() {
     setCargando(true)
 
     // Primero cargamos la lista de amigos con la query básica (siempre funciona)
-    const [{ data: aceptadas }, { data: entrantes }, { data: salientes }] = await Promise.all([
+    const [{ data: aceptadas }, { data: entrantes }, { data: salientes }, { data: bloqueadosData }] = await Promise.all([
       supabase
         .from('amistades')
         .select(`
@@ -78,7 +78,14 @@ export default function Amigos() {
         .select('receptor_id')
         .eq('solicitante_id', userId)
         .eq('estado', 'pendiente'),
+      // Bloqueados por mí: la amistad se conserva pero no se muestran en la lista
+      supabase
+        .from('bloqueados')
+        .select('bloqueado_id')
+        .eq('bloqueador_id', userId),
     ])
+
+    const bloqueadosSet = new Set((bloqueadosData ?? []).map((b: any) => b.bloqueado_id as string))
 
     // Intentamos cargar las preferencias (favorito/silenciado) — solo disponibles después de correr la migración 002
     const { data: prefs } = await supabase
@@ -89,7 +96,10 @@ export default function Amigos() {
 
     const prefsMap = new Map((prefs ?? []).map((p: any) => [p.id as string, p]))
 
-    const lista: AmigoItem[] = (aceptadas ?? []).map((a: any) => {
+    const lista: AmigoItem[] = (aceptadas ?? []).filter((a: any) => {
+      const otro = a.solicitante.id === userId ? a.receptor : a.solicitante
+      return !bloqueadosSet.has(otro.id)
+    }).map((a: any) => {
       const esSolicitante = a.solicitante.id === userId
       const pref = prefsMap.get(a.id) as any
       return {
@@ -210,9 +220,9 @@ export default function Amigos() {
       Alert.alert('No se pudo bloquear', mensajeError(error))
       return
     }
-    await supabase.from('amistades').delete().eq('id', item.amistadId)
+    // La amistad se conserva "congelada": al desbloquear vuelve todo a la normalidad
     setAmigos(prev => prev.filter(a => a.amistadId !== item.amistadId))
-    setToast({ titulo: 'Usuario bloqueado', subtitulo: `Se eliminó la amistad con ${item.amigo.nombre.split(' ')[0]}.` })
+    setToast({ titulo: 'Usuario bloqueado', subtitulo: `Podés desbloquear a ${item.amigo.nombre.split(' ')[0]} desde tu perfil.` })
   }
 
   function reportarAmigo(item: AmigoItem) {
@@ -380,7 +390,7 @@ export default function Amigos() {
         onClose={() => setConfirmBloquear(null)}
         onConfirmar={() => confirmBloquear && ejecutarBloqueo(confirmBloquear)}
         titulo="Bloquear usuario"
-        descripcion={`¿Querés bloquear a ${confirmBloquear?.amigo.nombre ?? ''}? Se eliminará la amistad y dejarán de ver el contenido del otro.`}
+        descripcion={`¿Querés bloquear a ${confirmBloquear?.amigo.nombre ?? ''}? No van a poder chatear ni invitarse a jugar mientras dure el bloqueo. La amistad se conserva y al desbloquear vuelve todo a la normalidad.`}
         nombre={confirmBloquear?.amigo.nombre ?? ''}
         avatar_url={confirmBloquear?.amigo.avatar_url}
         labelConfirmar="Bloquear"
