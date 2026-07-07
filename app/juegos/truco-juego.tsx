@@ -13,18 +13,27 @@ import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
 import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
+import { mensajeError } from '@/lib/errores'
 import {
   Carta, Equipo, EstadoJuego, Accion, Evento, Palo,
-  estadoInicial, reducir, rivalDe, accionesDisponibles, subidasEnvido,
-  etiquetaEnvido, valorEnvidoChain,
+  estadoInicial, reducir, rivalDe, equipoDe, miembrosDe, normalizarEstado,
+  accionesDisponibles, subidasEnvido, etiquetaEnvido, valorEnvidoChain,
 } from '@/lib/truco'
 
 type Fase = 'setup' | 'flor' | 'waiting' | 'game'
 type Modo = 'mano' | 'parejas' | 'trios'
+type ModoJuego = 'mano' | 'parejas'
 type Amigo = { id: string; nombre: string; avatar_url?: string }
-type Invitacion = { id: string; conFlor: boolean; de: Amigo }
-type PartidaActiva = { id: string; miEquipo: Equipo; rival: Amigo; estadoJuego: EstadoJuego; version: number }
-type Partida = { id: string; miEquipo: Equipo; rival: Amigo }
+type Invitacion = {
+  id: string; conFlor: boolean; modo: ModoJuego
+  de: Amigo; jugadores: Amigo[]; miAsiento: number
+}
+type MesaEspera = {
+  id: string; conFlor: boolean; modo: ModoJuego
+  jugadores: Amigo[]; miAsiento: number; aceptados: string[]
+}
+type PartidaActiva = { id: string; miAsiento: number; jugadores: Amigo[]; estadoJuego: EstadoJuego; version: number }
+type Partida = { id: string; miAsiento: number; jugadores: Amigo[]; conFlor: boolean; modo: ModoJuego }
 
 const PALILLOS = {
   1: require('../../assets/truco/palillos/palillos_1.png'),
@@ -61,6 +70,16 @@ function palillosFor(score: number): { key: string; n: 1 | 2 | 3 | 4 | 5 }[] {
   while (s >= 5) { out.push({ key: 'p' + i, n: 5 }); i++; s -= 5 }
   if (s > 0) out.push({ key: 'p' + i, n: s as 1 | 2 | 3 | 4 })
   return out
+}
+
+/** Jugadores por asiento a partir de una fila de truco_partidas (con embeds j1..j4). */
+function jugadoresDeRow(row: any): Amigo[] {
+  const ids = [row.jugador1, row.jugador2, row.jugador3, row.jugador4]
+  const perfiles = [row.j1, row.j2, row.j3, row.j4]
+  const n = row.modo === 'parejas' ? 4 : 2
+  return ids.slice(0, n).map((id: string, i: number) => ({
+    id, nombre: perfiles[i]?.nombre ?? 'Jugador',
+  }))
 }
 
 // ─── Animated dot ─────────────────────────────────────────────────────────────
@@ -175,8 +194,9 @@ const cv = StyleSheet.create({
 // ─── Setup screen ─────────────────────────────────────────────────────────────
 
 function PantallaSetup({
-  c, modo, setModo, amigos, cargando, invitaciones, partidasActivas,
-  onSeleccionarAmigo, onAceptarInv, onRechazarInv, onContinuar, onBack,
+  c, modo, setModo, amigos, cargando, invitaciones, mesas, partidasActivas, seleccion,
+  onSeleccionarAmigo, onToggleSeleccion, onContinuarParejas,
+  onAceptarInv, onRechazarInv, onEntrarMesa, onContinuar, onBack,
 }: {
   c: ColoresTema
   modo: Modo
@@ -184,14 +204,24 @@ function PantallaSetup({
   amigos: Amigo[]
   cargando: boolean
   invitaciones: Invitacion[]
+  mesas: MesaEspera[]
   partidasActivas: PartidaActiva[]
+  seleccion: Amigo[]
   onSeleccionarAmigo: (a: Amigo) => void
+  onToggleSeleccion: (a: Amigo) => void
+  onContinuarParejas: () => void
   onAceptarInv: (inv: Invitacion) => void
   onRechazarInv: (inv: Invitacion) => void
+  onEntrarMesa: (m: MesaEspera) => void
   onContinuar: (p: PartidaActiva) => void
   onBack: () => void
 }) {
   const es = setupEstilos(c)
+  const esParejas = modo === 'parejas'
+  const rolDe = (a: Amigo) => {
+    const i = seleccion.findIndex(s => s.id === a.id)
+    return i === -1 ? null : i === 0 ? 'Compañero' : 'Rival'
+  }
   return (
     <View style={[es.contenedor, { backgroundColor: c.fondo }]}>
       <TouchableOpacity onPress={onBack} activeOpacity={0.7} style={es.volverBtn}>
@@ -204,20 +234,53 @@ function PantallaSetup({
         {partidasActivas.length > 0 && (
           <>
             <Text style={[es.seccion, { color: c.textoSuave }]}>Partida en curso</Text>
-            {partidasActivas.map(p => (
+            {partidasActivas.map(p => {
+              const rivales = p.jugadores.filter((_, a) => equipoDe(a) !== equipoDe(p.miAsiento))
+              const miEq = equipoDe(p.miAsiento)
+              return (
+                <TouchableOpacity
+                  key={p.id}
+                  style={[es.invCard, { backgroundColor: 'rgba(201,168,76,0.08)', borderColor: c.primario }]}
+                  onPress={() => onContinuar(p)}
+                  activeOpacity={0.8}
+                >
+                  <View style={[es.amigoAvatar, { backgroundColor: colorAvatar(rivales[0].id) }]}>
+                    <Text style={es.amigoIniciales}>{inicial(rivales[0].nombre)}</Text>
+                  </View>
+                  <View style={{ flex: 1 }}>
+                    <Text style={[es.amigoNombre, { color: c.texto }]} numberOfLines={1}>
+                      vs {rivales.map(r => r.nombre).join(' y ')}
+                    </Text>
+                    <Text style={[es.invDesc, { color: c.primarioSuave }]}>
+                      {p.estadoJuego.puntos[miEq]} — {p.estadoJuego.puntos[rivalDe(miEq)]} · Tocá para volver
+                    </Text>
+                  </View>
+                  <Text style={[es.chevron, { color: c.primario }]}>›</Text>
+                </TouchableOpacity>
+              )
+            })}
+          </>
+        )}
+
+        {mesas.length > 0 && (
+          <>
+            <Text style={[es.seccion, { color: c.textoSuave }]}>Mesa esperando jugadores</Text>
+            {mesas.map(m => (
               <TouchableOpacity
-                key={p.id}
-                style={[es.invCard, { backgroundColor: 'rgba(201,168,76,0.08)', borderColor: c.primario }]}
-                onPress={() => onContinuar(p)}
+                key={m.id}
+                style={[es.invCard, { backgroundColor: c.fondoCard, borderColor: c.borde }]}
+                onPress={() => onEntrarMesa(m)}
                 activeOpacity={0.8}
               >
-                <View style={[es.amigoAvatar, { backgroundColor: colorAvatar(p.rival.id) }]}>
-                  <Text style={es.amigoIniciales}>{inicial(p.rival.nombre)}</Text>
+                <View style={[es.amigoAvatar, { backgroundColor: colorAvatar(m.jugadores[0].id) }]}>
+                  <Text style={es.amigoIniciales}>{inicial(m.jugadores[0].nombre)}</Text>
                 </View>
                 <View style={{ flex: 1 }}>
-                  <Text style={[es.amigoNombre, { color: c.texto }]} numberOfLines={1}>vs {p.rival.nombre}</Text>
-                  <Text style={[es.invDesc, { color: c.primarioSuave }]}>
-                    {p.estadoJuego.puntos[p.miEquipo]} — {p.estadoJuego.puntos[rivalDe(p.miEquipo)]} · Tocá para volver
+                  <Text style={[es.amigoNombre, { color: c.texto }]} numberOfLines={1}>
+                    {m.modo === 'parejas' ? 'Truco de parejas' : `vs ${m.jugadores[1].nombre}`}
+                  </Text>
+                  <Text style={[es.invDesc, { color: c.textoSuave }]}>
+                    {m.aceptados.length + 1}/{m.jugadores.length} listos · Tocá para entrar
                   </Text>
                 </View>
                 <Text style={[es.chevron, { color: c.primario }]}>›</Text>
@@ -237,7 +300,7 @@ function PantallaSetup({
                 <View style={{ flex: 1 }}>
                   <Text style={[es.amigoNombre, { color: c.texto }]} numberOfLines={1}>{inv.de.nombre}</Text>
                   <Text style={[es.invDesc, { color: c.textoSuave }]}>
-                    Truco {inv.conFlor ? 'con flor' : 'sin flor'} · Mano a mano
+                    Truco {inv.conFlor ? 'con flor' : 'sin flor'} · {inv.modo === 'parejas' ? 'Parejas' : 'Mano a mano'}
                   </Text>
                 </View>
                 <TouchableOpacity
@@ -258,7 +321,7 @@ function PantallaSetup({
         <Text style={[es.seccion, { color: c.textoSuave }]}>Modo</Text>
         <View style={[es.modoRow, { backgroundColor: c.fondoInput, borderColor: c.borde }]}>
           {(['mano', 'parejas', 'trios'] as Modo[]).map(m => {
-            const disponible = m === 'mano'
+            const disponible = m !== 'trios'
             return (
               <TouchableOpacity
                 key={m}
@@ -276,27 +339,73 @@ function PantallaSetup({
           })}
         </View>
 
+        {esParejas && (
+          <View style={[es.parejasResumen, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+            <Text style={[es.parejasTexto, { color: c.texto }]}>
+              <Text style={{ color: c.primario }}>Vos{seleccion[0] ? ` y ${seleccion[0].nombre}` : ' y …'}</Text>
+              {'  contra  '}
+              <Text style={{ color: c.textoSuave }}>
+                {seleccion[1]?.nombre ?? '…'} y {seleccion[2]?.nombre ?? '…'}
+              </Text>
+            </Text>
+            <Text style={[es.parejasHint, { color: c.textoSuave }]}>
+              El primero que elijas es tu compañero; los otros dos, los rivales.
+            </Text>
+          </View>
+        )}
+
         <Text style={[es.seccion, { color: c.textoSuave }]}>Amigos en Timba</Text>
         {cargando ? (
           <ActivityIndicator color={c.primario} style={{ marginTop: 32 }} />
         ) : amigos.length === 0 ? (
           <Text style={[es.vacio, { color: c.textoSuave }]}>Todavía no tenés amigos en Timba.</Text>
         ) : (
-          amigos.map(a => (
-            <View key={a.id} style={[es.amigoCard, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
-              <View style={[es.amigoAvatar, { backgroundColor: colorAvatar(a.id) }]}>
-                <Text style={es.amigoIniciales}>{inicial(a.nombre)}</Text>
+          amigos.map(a => {
+            const rol = rolDe(a)
+            return (
+              <View key={a.id} style={[es.amigoCard, { backgroundColor: c.fondoCard, borderColor: rol ? c.primario : c.borde }]}>
+                <View style={[es.amigoAvatar, { backgroundColor: colorAvatar(a.id) }]}>
+                  <Text style={es.amigoIniciales}>{inicial(a.nombre)}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[es.amigoNombre, { color: c.texto }]} numberOfLines={1}>{a.nombre}</Text>
+                  {rol && <Text style={[es.invDesc, { color: c.primarioSuave }]}>{rol}</Text>}
+                </View>
+                {esParejas ? (
+                  <TouchableOpacity
+                    style={[es.invitarBtn, rol ? { backgroundColor: c.fondoInput, borderWidth: 1, borderColor: c.borde } : { backgroundColor: c.primario }]}
+                    onPress={() => onToggleSeleccion(a)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[es.invitarTexto, { color: rol ? c.textoSuave : c.fondo }]}>
+                      {rol ? 'Sacar' : 'Sumar'}
+                    </Text>
+                  </TouchableOpacity>
+                ) : (
+                  <TouchableOpacity
+                    style={[es.invitarBtn, { backgroundColor: c.primario }]}
+                    onPress={() => onSeleccionarAmigo(a)}
+                    activeOpacity={0.8}
+                  >
+                    <Text style={[es.invitarTexto, { color: c.fondo }]}>Invitar</Text>
+                  </TouchableOpacity>
+                )}
               </View>
-              <Text style={[es.amigoNombre, { color: c.texto }]} numberOfLines={1}>{a.nombre}</Text>
-              <TouchableOpacity
-                style={[es.invitarBtn, { backgroundColor: c.primario }]}
-                onPress={() => onSeleccionarAmigo(a)}
-                activeOpacity={0.8}
-              >
-                <Text style={[es.invitarTexto, { color: c.fondo }]}>Invitar</Text>
-              </TouchableOpacity>
-            </View>
-          ))
+            )
+          })
+        )}
+
+        {esParejas && (
+          <TouchableOpacity
+            style={[es.continuarBtn, { backgroundColor: c.primario }, seleccion.length < 3 && { opacity: 0.4 }]}
+            disabled={seleccion.length < 3}
+            onPress={onContinuarParejas}
+            activeOpacity={0.8}
+          >
+            <Text style={[es.continuarTexto, { color: c.fondo }]}>
+              {seleccion.length < 3 ? `Elegí ${3 - seleccion.length} más` : 'Armar la mesa'}
+            </Text>
+          </TouchableOpacity>
         )}
       </ScrollView>
     </View>
@@ -318,6 +427,9 @@ function setupEstilos(c: ColoresTema) {
     modoBtn: { flex: 1, borderRadius: 10, paddingVertical: 11, alignItems: 'center' },
     modoBtnTexto: { fontSize: 14, fontWeight: '700' },
     modoPronto: { fontSize: 10, fontWeight: '600', marginTop: 2 },
+    parejasResumen: { borderRadius: 14, borderWidth: 1, padding: 14, gap: 6, marginBottom: 6 },
+    parejasTexto: { fontSize: 15, fontWeight: '700', textAlign: 'center' },
+    parejasHint: { fontSize: 12, textAlign: 'center' },
     lista: { gap: 10, paddingBottom: 24 },
     amigoCard: {
       flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -339,6 +451,8 @@ function setupEstilos(c: ColoresTema) {
     invitarTexto: { fontSize: 14, fontWeight: '800' },
     rechazarBtn: { padding: 6 },
     rechazarTexto: { fontSize: 16, fontWeight: '700' },
+    continuarBtn: { borderRadius: 14, paddingVertical: 16, alignItems: 'center', marginTop: 8 },
+    continuarTexto: { fontSize: 16, fontWeight: '800' },
     vacio: { textAlign: 'center', marginTop: 48, fontSize: 15 },
     chevron: { fontSize: 24, fontWeight: '700' },
   })
@@ -347,10 +461,10 @@ function setupEstilos(c: ColoresTema) {
 // ─── Flor screen ──────────────────────────────────────────────────────────────
 
 function PantallaFlor({
-  c, amigo, onConfirmar, onBack,
+  c, descripcion, onConfirmar, onBack,
 }: {
   c: ColoresTema
-  amigo: Amigo
+  descripcion: string
   onConfirmar: (conFlor: boolean) => void
   onBack: () => void
 }) {
@@ -366,9 +480,7 @@ function PantallaFlor({
         </View>
 
         <Text style={[fl.titulo, { color: c.texto }]}>¿Con flor?</Text>
-        <Text style={[fl.subtitulo, { color: c.textoSuave }]}>
-          ¿Querés jugar con flor contra {amigo.nombre}?
-        </Text>
+        <Text style={[fl.subtitulo, { color: c.textoSuave }]}>{descripcion}</Text>
 
         <View style={fl.opciones}>
           <TouchableOpacity
@@ -411,42 +523,60 @@ const fl = StyleSheet.create({
 // ─── Waiting screen ───────────────────────────────────────────────────────────
 
 function PantallaWaiting({
-  c, invitado, onCancelar,
+  c, jugadores, aceptados, miAsiento, onSalir,
 }: {
   c: ColoresTema
-  invitado: Amigo
-  onCancelar: () => void
+  jugadores: Amigo[]
+  aceptados: string[]
+  miAsiento: number
+  onSalir: () => void
 }) {
   const es = waitEstilos(c)
+  const esCreador = miAsiento === 0
   return (
     <View style={[es.contenedor, { backgroundColor: c.fondo }]}>
-      <TouchableOpacity onPress={onCancelar} activeOpacity={0.7} style={es.volverBtn}>
-        <Text style={[es.volver, { color: c.primario }]}>‹ Cancelar</Text>
+      <TouchableOpacity onPress={onSalir} activeOpacity={0.7} style={es.volverBtn}>
+        <Text style={[es.volver, { color: c.primario }]}>‹ {esCreador ? 'Cancelar mesa' : 'Volver'}</Text>
       </TouchableOpacity>
       <Text style={[es.titulo, { color: c.texto }]}>Sala de Truco</Text>
-      <Text style={[es.sala, { color: c.textoSuave }]}>Invitación enviada</Text>
+      <Text style={[es.sala, { color: c.textoSuave }]}>
+        {jugadores.length === 4 ? 'Parejas · La partida arranca cuando acepten todos.' : 'Invitación enviada'}
+      </Text>
 
       <View style={es.centro}>
-        <View style={es.ringWrap}>
-          <View style={[es.ring, { borderColor: 'rgba(201,168,76,0.4)' }]} />
-          <View style={[es.avatar, { backgroundColor: colorAvatar(invitado.id) }]}>
-            <Text style={es.avatarLetra}>{inicial(invitado.nombre)}</Text>
-          </View>
+        <View style={{ width: '100%', gap: 10 }}>
+          {jugadores.map((j, asiento) => {
+            const ok = asiento === 0 || aceptados.includes(j.id)
+            const esRival = equipoDe(asiento) !== equipoDe(miAsiento)
+            return (
+              <View key={j.id} style={[es.jugadorCard, { backgroundColor: c.fondoCard, borderColor: ok ? c.primario : c.borde }]}>
+                <View style={[es.avatarChico, { backgroundColor: colorAvatar(j.id) }]}>
+                  <Text style={es.avatarChicoLetra}>{inicial(j.nombre)}</Text>
+                </View>
+                <View style={{ flex: 1 }}>
+                  <Text style={[es.nombreChico, { color: c.texto }]} numberOfLines={1}>
+                    {asiento === miAsiento ? 'Vos' : j.nombre}
+                  </Text>
+                  {jugadores.length === 4 && (
+                    <Text style={[es.equipoChico, { color: c.textoSuave }]}>{esRival ? 'Ellos' : 'Nos'}</Text>
+                  )}
+                </View>
+                <Text style={[es.estadoChip, { color: ok ? '#3dbb7e' : c.textoSuave }]}>
+                  {ok ? 'Listo' : 'Esperando…'}
+                </Text>
+              </View>
+            )
+          })}
         </View>
 
-        <Text style={[es.nombre, { color: c.texto }]}>{invitado.nombre}</Text>
-
-        <View style={{ alignItems: 'center', gap: 14 }}>
+        <View style={{ alignItems: 'center', gap: 14, marginTop: 22 }}>
           <View style={es.dotsRow}>
             <PuntitoCargando delay={0} />
             <PuntitoCargando delay={250} />
             <PuntitoCargando delay={500} />
           </View>
-          <Text style={[es.esperandoTexto, { color: '#DFC47A' }]}>
-            Esperando que {invitado.nombre} acepte…
-          </Text>
           <Text style={[es.hint, { color: c.textoSuave }]}>
-            Tiene que entrar a Juegos › Truco › Juego para ver tu invitación.
+            Tienen que entrar a Juegos › Truco › Juego para ver la invitación.
           </Text>
         </View>
       </View>
@@ -461,40 +591,47 @@ function waitEstilos(c: ColoresTema) {
     volver: { fontSize: 17, fontWeight: '600' },
     titulo: { fontSize: 30, fontWeight: '800', marginTop: 6, marginBottom: 2 },
     sala: { fontSize: 14, marginBottom: 8 },
-    centro: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 22, paddingBottom: 30 },
-    ringWrap: { width: 120, height: 120, alignItems: 'center', justifyContent: 'center' },
-    ring: {
-      position: 'absolute', width: 120, height: 120, borderRadius: 60, borderWidth: 2,
+    centro: { flex: 1, justifyContent: 'center', paddingBottom: 30 },
+    jugadorCard: {
+      flexDirection: 'row', alignItems: 'center', gap: 12,
+      borderRadius: 16, borderWidth: 1.5, padding: 12, paddingHorizontal: 14,
     },
-    avatar: {
-      width: 96, height: 96, borderRadius: 48,
+    avatarChico: {
+      width: 44, height: 44, borderRadius: 22,
       alignItems: 'center', justifyContent: 'center',
-      borderWidth: 3, borderColor: 'rgba(255,255,255,0.14)',
+      borderWidth: 2, borderColor: 'rgba(255,255,255,0.14)',
     },
-    avatarLetra: { color: '#fff', fontWeight: '800', fontSize: 40 },
-    nombre: { fontSize: 22, fontWeight: '800' },
+    avatarChicoLetra: { color: '#fff', fontWeight: '800', fontSize: 18 },
+    nombreChico: { fontSize: 16, fontWeight: '700' },
+    equipoChico: { fontSize: 12, marginTop: 1 },
+    estadoChip: { fontSize: 13, fontWeight: '700' },
     dotsRow: { flexDirection: 'row', gap: 7, alignItems: 'center' },
-    esperandoTexto: { fontSize: 15, fontWeight: '600' },
     hint: { fontSize: 12, textAlign: 'center', paddingHorizontal: 30, lineHeight: 17 },
   })
 }
 
 // ─── Game screen ──────────────────────────────────────────────────────────────
 
-function formatearEvento(ev: Evento, yo: Equipo, nombreRival: string): string {
-  const nombre = (e: Equipo) => (e === yo ? 'Vos' : nombreRival)
+function formatearEvento(ev: Evento, yo: number, jugadores: Amigo[], n: number): string {
+  const nombreAsiento = (a: number) => (a === yo ? 'Vos' : jugadores[a]?.nombre ?? 'Rival')
+  const miEquipo = equipoDe(yo)
+  const nombreEquipo = (e: Equipo) =>
+    n === 2
+      ? (e === miEquipo ? 'Vos' : nombreAsiento(e === 'p1' ? 0 : 1))
+      : (e === miEquipo ? 'Nos' : 'Ellos')
+  const prefijo = n === 4 && ev.por !== yo ? `${nombreAsiento(ev.por)}\n` : ''
   switch (ev.tipo) {
-    case 'canto': return ev.texto
-    case 'respuesta': return ev.quiero ? '¡QUIERO!' : 'NO QUIERO'
+    case 'canto': return prefijo + ev.texto
+    case 'respuesta': return prefijo + (ev.quiero ? '¡QUIERO!' : 'NO QUIERO')
     case 'envido': {
       const d = ev.datos
-      return `Envido: ${nombre('p1')} ${d.p1} · ${nombre('p2')} ${d.p2}\n+${d.valor} ${nombre(d.ganador)}`
+      return `Envido: ${nombreEquipo('p1')} ${d.p1} · ${nombreEquipo('p2')} ${d.p2}\n+${d.valor} ${nombreEquipo(d.ganador)}`
     }
     case 'flor': {
       const d = ev.datos
-      return d.doble ? `¡FLOR Y FLOR!\n+${d.valor} ${nombre(d.ganador)}` : `¡FLOR!\n+${d.valor} ${nombre(d.ganador)}`
+      return d.doble ? `¡FLOR Y FLOR!\n+${d.valor} ${nombreEquipo(d.ganador)}` : `¡FLOR!\n+${d.valor} ${nombreEquipo(d.ganador)}`
     }
-    case 'mazo': return ev.por === yo ? 'Te fuiste al mazo' : `${nombreRival} se fue al mazo`
+    case 'mazo': return ev.por === yo ? 'Te fuiste al mazo' : `${nombreAsiento(ev.por)} se fue al mazo`
   }
 }
 
@@ -526,16 +663,36 @@ function PanelScore({ label, puntos, lado }: { label: string; puntos: number; la
   )
 }
 
+function ZonaJugador({ j, cartas, esTurno, mini }: { j: Amigo; cartas: number; esTurno: boolean; mini?: boolean }) {
+  return (
+    <View style={[jg.rivalZonaItem, mini && { flex: 1 }]}>
+      <View style={[
+        jg.rivalAvatar, mini && jg.rivalAvatarMini,
+        { backgroundColor: colorAvatar(j.id) },
+        esTurno && jg.avatarTurno,
+      ]}>
+        <Text style={[jg.rivalLetra, mini && { fontSize: 14 }]}>{inicial(j.nombre)}</Text>
+      </View>
+      <Text style={jg.rivalNombre} numberOfLines={1}>{j.nombre}</Text>
+      <View style={jg.dorsosRow}>
+        {Array.from({ length: cartas }).map((_, i) => <CartaDorso key={i} />)}
+      </View>
+    </View>
+  )
+}
+
 function PantallaJuego({
-  c, rival: rivalAmigo, miEquipo, estado: s, onAccion, onSalir,
+  c, jugadores, miAsiento, estado: s, onAccion, onSalir,
 }: {
   c: ColoresTema
-  rival: Amigo
-  miEquipo: Equipo
+  jugadores: Amigo[]
+  miAsiento: number
   estado: EstadoJuego
   onAccion: (a: Accion) => void
   onSalir: () => void
 }) {
+  const n = s.numJugadores
+  const miEquipo = equipoDe(miAsiento)
   const equipoRival = rivalDe(miEquipo)
   const [toast, setToast] = useState<string | null>(null)
   const [envidoPicker, setEnvidoPicker] = useState(false)
@@ -543,19 +700,24 @@ function PantallaJuego({
   const ultimoEvento = useRef(s.evento?.id ?? 0)
   const toastTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
 
+  // Asientos de los demás en la mesa: izquierda, al frente (compañero en parejas), derecha
+  const izq = (miAsiento + 1) % 4
+  const frente = n === 4 ? (miAsiento + 2) % 4 : miAsiento === 0 ? 1 : 0
+  const der = (miAsiento + 3) % 4
+
   // Toast de cantos/eventos (llega por el estado sincronizado)
   useEffect(() => {
     const ev = s.evento
     if (!ev || ev.id <= ultimoEvento.current) return
     ultimoEvento.current = ev.id
     if (toastTimer.current) clearTimeout(toastTimer.current)
-    setToast(formatearEvento(ev, miEquipo, rivalAmigo.nombre))
+    setToast(formatearEvento(ev, miAsiento, jugadores, n))
     toastTimer.current = setTimeout(() => setToast(null), 1900)
   }, [s.evento?.id])
 
   useEffect(() => () => { if (toastTimer.current) clearTimeout(toastTimer.current) }, [])
 
-  const acciones = accionesDisponibles(s, miEquipo)
+  const acciones = accionesDisponibles(s, miAsiento)
   const pendienteParaMi = !!s.pendiente && s.pendiente.por !== miEquipo
   const pendienteMio = !!s.pendiente && s.pendiente.por === miEquipo
 
@@ -565,10 +727,11 @@ function PantallaJuego({
 
   // Baza visible: la actual si tiene cartas, si no la anterior (para ver cómo terminó)
   const b = s.bazaActual
-  const bazaVisible = (s.mesa.p1[b] || s.mesa.p2[b] || b === 0) ? b : b - 1
+  const hayCartaEnBaza = s.mesa.some(m => m[b])
+  const bazaVisible = hayCartaEnBaza || b === 0 ? b : b - 1
 
-  const misCartas = s.cartas[miEquipo]
-  const cartasRival = s.cartas[equipoRival].length
+  const misCartas = s.cartas[miAsiento]
+  const nombreAsiento = (a: number) => (a === miAsiento ? 'Vos' : jugadores[a]?.nombre ?? 'Rival')
 
   const textoTurno = s.resumenMano || s.ganador
     ? ''
@@ -576,7 +739,7 @@ function PantallaJuego({
       ? 'Esperando respuesta…'
       : pendienteParaMi
         ? '¡Respondé el canto!'
-        : s.turno === miEquipo ? 'ES TU TURNO' : `TURNO DE ${rivalAmigo.nombre.toUpperCase()}`
+        : s.turno === miAsiento ? 'ES TU TURNO' : `TURNO DE ${nombreAsiento(s.turno).toUpperCase()}`
 
   function renderRespuesta() {
     const pend = s.pendiente!
@@ -619,6 +782,12 @@ function PantallaJuego({
     )
   }
 
+  const abandonoTexto = !s.abandonadoPor
+    ? null
+    : s.abandonadoPorAsiento === miAsiento
+      ? 'Abandonaste la partida'
+      : `${nombreAsiento(s.abandonadoPorAsiento ?? (s.abandonadoPor === 'p1' ? 0 : 1))} abandonó la partida`
+
   return (
     <View style={{ flex: 1, backgroundColor: '#141210' }}>
       {/* Top bar */}
@@ -626,8 +795,10 @@ function PantallaJuego({
         <TouchableOpacity onPress={onSalir} activeOpacity={0.7}>
           <Text style={jg.salirTexto}>‹ Salir</Text>
         </TouchableOpacity>
-        <Text style={jg.barTitulo}>Truco · Mano a mano</Text>
-        <Text style={jg.salaTexto}>vs {rivalAmigo.nombre}</Text>
+        <Text style={jg.barTitulo}>Truco · {n === 4 ? 'Parejas' : 'Mano a mano'}</Text>
+        <Text style={jg.salaTexto} numberOfLines={1}>
+          {n === 4 ? `con ${jugadores[frente]?.nombre}` : `vs ${jugadores[frente]?.nombre}`}
+        </Text>
       </View>
 
       {/* Game area */}
@@ -639,30 +810,36 @@ function PantallaJuego({
         <PanelScore label="ELLOS" puntos={s.puntos[equipoRival]} lado="right" />
 
         <View style={jg.contenido}>
-          {/* Rival: avatar + cartas boca abajo */}
-          <View style={jg.rivalZona}>
-            <View style={[jg.rivalAvatar, { backgroundColor: colorAvatar(rivalAmigo.id) }]}>
-              <Text style={jg.rivalLetra}>{inicial(rivalAmigo.nombre)}</Text>
+          {/* Los demás jugadores */}
+          {n === 4 ? (
+            <View style={jg.rivales4Row}>
+              <ZonaJugador j={jugadores[izq]} cartas={s.cartas[izq].length} esTurno={s.turno === izq} mini />
+              <ZonaJugador j={jugadores[frente]} cartas={s.cartas[frente].length} esTurno={s.turno === frente} mini />
+              <ZonaJugador j={jugadores[der]} cartas={s.cartas[der].length} esTurno={s.turno === der} mini />
             </View>
-            <Text style={jg.rivalNombre}>{rivalAmigo.nombre}</Text>
-            <View style={jg.dorsosRow}>
-              {Array.from({ length: cartasRival }).map((_, i) => <CartaDorso key={i} />)}
+          ) : (
+            <View style={jg.rivalZona}>
+              <ZonaJugador j={jugadores[frente]} cartas={s.cartas[frente].length} esTurno={s.turno === frente} />
             </View>
-          </View>
+          )}
 
           {/* Mesa: cartas jugadas de la baza visible */}
           <View style={jg.mesaZona}>
-            <CartaSlot carta={s.mesa[equipoRival][bazaVisible]} />
-            <View style={jg.bazasRow}>
-              {[0, 1, 2].map(i => {
-                const res = s.bazas[i]
-                const color = !res ? 'rgba(255,255,255,0.25)'
-                  : res === 'parda' ? '#9A8E7E'
-                    : res === miEquipo ? '#3dbb7e' : '#d05050'
-                return <View key={i} style={[jg.bazaDot, { backgroundColor: color }]} />
-              })}
+            <CartaSlot carta={s.mesa[frente][bazaVisible]} />
+            <View style={jg.mesaFilaMedia}>
+              {n === 4 && <CartaSlot carta={s.mesa[izq][bazaVisible]} />}
+              <View style={jg.bazasRow}>
+                {[0, 1, 2].map(i => {
+                  const res = s.bazas[i]
+                  const color = !res ? 'rgba(255,255,255,0.25)'
+                    : res === 'parda' ? '#9A8E7E'
+                      : res === miEquipo ? '#3dbb7e' : '#d05050'
+                  return <View key={i} style={[jg.bazaDot, { backgroundColor: color }]} />
+                })}
+              </View>
+              {n === 4 && <CartaSlot carta={s.mesa[der][bazaVisible]} />}
             </View>
-            <CartaSlot carta={s.mesa[miEquipo][bazaVisible]} />
+            <CartaSlot carta={s.mesa[miAsiento][bazaVisible]} />
           </View>
 
           {/* Turno */}
@@ -736,7 +913,9 @@ function PantallaJuego({
           <View style={[StyleSheet.absoluteFill, jg.centrado]} pointerEvents="none">
             <View style={jg.resumenCard}>
               <Text style={jg.resumenTitulo}>
-                {s.resumenMano.ganador === miEquipo ? '¡Ganaste la mano!' : `La mano es de ${rivalAmigo.nombre}`}
+                {s.resumenMano.ganador === miEquipo
+                  ? (n === 4 ? '¡Ganamos la mano!' : '¡Ganaste la mano!')
+                  : (n === 4 ? 'La mano es de ellos' : `La mano es de ${jugadores[frente]?.nombre}`)}
               </Text>
               <Text style={jg.resumenPuntos}>+{s.resumenMano.puntos}</Text>
               {s.resumenMano.razon === 'noQuerido' && <Text style={jg.resumenRazon}>No quisieron</Text>}
@@ -749,13 +928,11 @@ function PantallaJuego({
         {/* Fin de partida */}
         {s.ganador && (
           <View style={[StyleSheet.absoluteFill, jg.finOverlay]}>
-            <Text style={jg.finTitulo}>{s.ganador === miEquipo ? '¡GANASTE!' : 'PERDISTE'}</Text>
+            <Text style={jg.finTitulo}>
+              {s.ganador === miEquipo ? (n === 4 ? '¡GANAMOS!' : '¡GANASTE!') : (n === 4 ? 'PERDIMOS' : 'PERDISTE')}
+            </Text>
             <Text style={jg.finPuntos}>{s.puntos[miEquipo]} — {s.puntos[equipoRival]}</Text>
-            {s.abandonadoPor && (
-              <Text style={jg.finAbandono}>
-                {s.abandonadoPor === miEquipo ? 'Abandonaste la partida' : `${rivalAmigo.nombre} abandonó la partida`}
-              </Text>
-            )}
+            {abandonoTexto && <Text style={jg.finAbandono}>{abandonoTexto}</Text>}
             <TouchableOpacity style={jg.finBtn} onPress={onSalir} activeOpacity={0.8}>
               <Text style={jg.finBtnTx}>Salir</Text>
             </TouchableOpacity>
@@ -803,16 +980,23 @@ const jg = StyleSheet.create({
   },
   centrado: { alignItems: 'center', justifyContent: 'center' },
 
-  // Rival
-  rivalZona: { alignItems: 'center', gap: 3, marginHorizontal: ZONA_LATERAL },
+  // Rivales / compañero
+  rivalZona: { alignItems: 'center', marginHorizontal: ZONA_LATERAL },
+  rivales4Row: {
+    flexDirection: 'row', justifyContent: 'space-between', alignItems: 'flex-start',
+    marginHorizontal: ZONA_LATERAL, gap: 6,
+  },
+  rivalZonaItem: { alignItems: 'center', gap: 3 },
   rivalAvatar: {
     width: 44, height: 44, borderRadius: 22,
     alignItems: 'center', justifyContent: 'center',
     borderWidth: 2, borderColor: 'rgba(255,255,255,0.18)',
   },
+  rivalAvatarMini: { width: 34, height: 34, borderRadius: 17 },
+  avatarTurno: { borderColor: '#DFC47A' },
   rivalLetra: { color: '#fff', fontWeight: '800', fontSize: 17 },
   rivalNombre: {
-    color: '#fff', fontSize: 12, fontWeight: '700',
+    color: '#fff', fontSize: 12, fontWeight: '700', maxWidth: 90,
     textShadowColor: 'rgba(0,0,0,0.6)', textShadowOffset: { width: 0, height: 1 }, textShadowRadius: 2,
   },
   dorsosRow: { flexDirection: 'row', gap: 5, marginTop: 2, minHeight: 32 },
@@ -822,6 +1006,7 @@ const jg = StyleSheet.create({
     flex: 1, alignItems: 'center', justifyContent: 'center',
     gap: 8, marginHorizontal: ZONA_LATERAL,
   },
+  mesaFilaMedia: { flexDirection: 'row', alignItems: 'center', gap: 14 },
   bazasRow: { flexDirection: 'row', gap: 8 },
   bazaDot: { width: 11, height: 11, borderRadius: 6 },
 
@@ -908,9 +1093,12 @@ export default function TrucoJuego() {
   const [modo, setModo] = useState<Modo>('mano')
   const [amigos, setAmigos] = useState<Amigo[]>([])
   const [invitaciones, setInvitaciones] = useState<Invitacion[]>([])
+  const [mesas, setMesas] = useState<MesaEspera[]>([])
   const [partidasActivas, setPartidasActivas] = useState<PartidaActiva[]>([])
   const [cargando, setCargando] = useState(true)
   const [amigoPendiente, setAmigoPendiente] = useState<Amigo | null>(null)
+  const [seleccion, setSeleccion] = useState<Amigo[]>([])
+  const [aceptados, setAceptados] = useState<string[]>([])
 
   const [partida, setPartida] = useState<Partida | null>(null)
   const [estadoJuego, setEstadoJuego] = useState<EstadoJuego | null>(null)
@@ -924,14 +1112,20 @@ export default function TrucoJuego() {
   useEffect(() => { faseRef.current = fase }, [fase])
   useEffect(() => { partidaRef.current = partida }, [partida])
 
-  // ── Carga inicial + realtime de invitaciones ──────────────────────────────
+  const yo: Amigo | null = usuario ? { id: usuario.id, nombre: usuario.apodo || usuario.nombre || 'Vos' } : null
+
+  // ── Carga inicial + realtime del lobby ─────────────────────────────────────
   useEffect(() => {
     cargarAmigos()
     cargarPendientes()
     if (!usuario?.id) return
+    const recargarLobby = () => { if (faseRef.current === 'setup') cargarPendientes() }
     const ch = supabase.channel(`truco-lobby-${usuario.id}`)
-      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'truco_partidas', filter: `jugador2=eq.${usuario.id}` }, () => cargarPendientes())
-      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'truco_partidas' }, () => cargarPendientes())
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'truco_partidas', filter: `jugador2=eq.${usuario.id}` }, recargarLobby)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'truco_partidas', filter: `jugador3=eq.${usuario.id}` }, recargarLobby)
+      .on('postgres_changes', { event: 'INSERT', schema: 'public', table: 'truco_partidas', filter: `jugador4=eq.${usuario.id}` }, recargarLobby)
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'truco_partidas', filter: `jugador1=eq.${usuario.id}` }, recargarLobby)
+      .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'truco_partidas' }, recargarLobby)
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [usuario?.id])
@@ -963,43 +1157,54 @@ export default function TrucoJuego() {
     setCargando(false)
   }
 
-  // Invitaciones que me mandaron + partidas en curso donde participo
+  // Invitaciones que me mandaron, mesas en espera y partidas en curso donde participo
   async function cargarPendientes() {
     if (!usuario?.id) return
     const { data } = await supabase
       .from('truco_partidas')
       .select(`
-        id, estado, con_flor, jugador1, jugador2, estado_juego, version,
+        id, estado, con_flor, modo, aceptados, jugador1, jugador2, jugador3, jugador4, estado_juego, version,
         j1:usuarios_publicos!truco_partidas_jugador1_fkey(id, nombre),
-        j2:usuarios_publicos!truco_partidas_jugador2_fkey(id, nombre)
+        j2:usuarios_publicos!truco_partidas_jugador2_fkey(id, nombre),
+        j3:usuarios_publicos!truco_partidas_jugador3_fkey(id, nombre),
+        j4:usuarios_publicos!truco_partidas_jugador4_fkey(id, nombre)
       `)
-      .or(`jugador1.eq.${usuario.id},jugador2.eq.${usuario.id}`)
+      .or(`jugador1.eq.${usuario.id},jugador2.eq.${usuario.id},jugador3.eq.${usuario.id},jugador4.eq.${usuario.id}`)
       .in('estado', ['esperando', 'jugando'])
       .order('created_at', { ascending: false })
 
     if (!data) return
     const invs: Invitacion[] = []
+    const mesasEspera: MesaEspera[] = []
     const activas: PartidaActiva[] = []
     for (const row of data as any[]) {
-      if (row.estado === 'esperando' && row.jugador2 === usuario.id) {
-        invs.push({
-          id: row.id,
-          conFlor: row.con_flor,
-          de: { id: row.j1?.id ?? row.jugador1, nombre: row.j1?.nombre ?? 'Amigo' },
-        })
+      const jugadores = jugadoresDeRow(row)
+      const miAsiento = jugadores.findIndex(j => j.id === usuario.id)
+      if (miAsiento === -1) continue
+      const modoRow: ModoJuego = row.modo === 'parejas' ? 'parejas' : 'mano'
+      const acept: string[] = row.aceptados ?? []
+      if (row.estado === 'esperando') {
+        if (miAsiento > 0 && !acept.includes(usuario.id)) {
+          invs.push({
+            id: row.id, conFlor: row.con_flor, modo: modoRow,
+            de: jugadores[0], jugadores, miAsiento,
+          })
+        } else {
+          mesasEspera.push({
+            id: row.id, conFlor: row.con_flor, modo: modoRow,
+            jugadores, miAsiento, aceptados: acept,
+          })
+        }
       } else if (row.estado === 'jugando' && row.estado_juego) {
-        const soyP1 = row.jugador1 === usuario.id
-        const rivalRow = soyP1 ? row.j2 : row.j1
         activas.push({
-          id: row.id,
-          miEquipo: soyP1 ? 'p1' : 'p2',
-          rival: { id: rivalRow?.id ?? (soyP1 ? row.jugador2 : row.jugador1), nombre: rivalRow?.nombre ?? 'Rival' },
-          estadoJuego: row.estado_juego,
+          id: row.id, miAsiento, jugadores,
+          estadoJuego: normalizarEstado(row.estado_juego),
           version: row.version,
         })
       }
     }
     setInvitaciones(invs)
+    setMesas(mesasEspera)
     setPartidasActivas(activas)
   }
 
@@ -1012,31 +1217,69 @@ export default function TrucoJuego() {
         if (typeof row.version === 'number' && row.version < versionRef.current) return
         versionRef.current = row.version ?? versionRef.current
         if (row.estado_juego) {
-          setEstadoJuego(row.estado_juego)
+          setEstadoJuego(normalizarEstado(row.estado_juego))
           if (faseRef.current === 'waiting') setFase('game')
+        } else if (Array.isArray(row.aceptados)) {
+          setAceptados(row.aceptados)
         }
       })
       .on('postgres_changes', { event: 'DELETE', schema: 'public', table: 'truco_partidas' }, payload => {
         const oldRow: any = payload.old
         if (oldRow?.id !== partidaRef.current?.id) return
         if (faseRef.current === 'waiting') {
+          const eraCreador = partidaRef.current?.miAsiento === 0
           setPartida(null)
           setEstadoJuego(null)
           setFase('setup')
           cargarPendientes()
-          Alert.alert('Invitación rechazada', 'Tu amigo no aceptó la partida.')
+          Alert.alert(
+            eraCreador ? 'Invitación rechazada' : 'Mesa cancelada',
+            eraCreador ? 'Un amigo no aceptó la partida.' : 'La mesa ya no está disponible.',
+          )
         }
       })
       .subscribe()
     return () => { supabase.removeChannel(ch) }
   }, [partida?.id])
 
+  // ── Arranque de la partida de parejas ──────────────────────────────────────
+  // El último en aceptar reparte (desde aceptarInvitacion). Este efecto es el
+  // respaldo: si ese cliente se cayó entre el RPC y el reparto, cualquiera de
+  // los que están en la sala intenta iniciar (guardado por estado='esperando').
+  useEffect(() => {
+    if (fase !== 'waiting' || !partida || partida.modo !== 'parejas') return
+    if (aceptados.length < 3) return
+    const t = setTimeout(() => iniciarPartida(partida), 1500 + partida.miAsiento * 1200)
+    return () => clearTimeout(t)
+  }, [fase, aceptados, partida])
+
+  async function iniciarPartida(p: Partida) {
+    if (faseRef.current === 'game') return
+    const inicialJuego = estadoInicial(p.conFlor, 4)
+    const { data } = await supabase
+      .from('truco_partidas')
+      .update({ estado: 'jugando', estado_juego: inicialJuego, version: 1, updated_at: new Date().toISOString() })
+      .eq('id', p.id)
+      .eq('estado', 'esperando')
+      .select('id')
+    if (data?.length) {
+      versionRef.current = 1
+      estadoRef.current = inicialJuego
+      setEstadoJuego(inicialJuego)
+      setFase('game')
+    }
+    // Si perdió la carrera, el realtime trae el reparto del que la ganó.
+  }
+
   // ── Nueva mano automática tras el resumen ──────────────────────────────────
   useEffect(() => {
     const s = estadoJuego
     if (!s?.resumenMano || s.ganador || !partida || fase !== 'game') return
-    // El ganador de la mano reparte; el otro tiene un fallback por si se cayó
-    const delay = s.resumenMano.ganador === partida.miEquipo ? 2800 : 7000
+    // Reparte el equipo que ganó la mano; los demás quedan de respaldo,
+    // escalonados por asiento (la versión deduplica).
+    const miEquipo = equipoDe(partida.miAsiento)
+    const orden = miembrosDe(miEquipo, s.numJugadores).indexOf(partida.miAsiento)
+    const delay = (s.resumenMano.ganador === miEquipo ? 2800 : 7000) + orden * 1800
     const t = setTimeout(() => dispatch({ tipo: 'nuevaMano' }), delay)
     return () => clearTimeout(t)
   }, [estadoJuego, partida, fase])
@@ -1046,7 +1289,7 @@ export default function TrucoJuego() {
     const prev = estadoRef.current
     const p = partidaRef.current
     if (!prev || !p || !usuario?.id) return
-    const nuevo = reducir(prev, accion, p.miEquipo)
+    const nuevo = reducir(prev, accion, p.miAsiento)
     if (nuevo === prev) return
 
     const v = versionRef.current
@@ -1061,7 +1304,8 @@ export default function TrucoJuego() {
     }
     if (nuevo.ganador) {
       upd.estado = 'terminada'
-      upd.ganador = nuevo.ganador === p.miEquipo ? usuario.id : p.rival.id
+      upd.equipo_ganador = nuevo.ganador
+      upd.ganador = p.jugadores[miembrosDe(nuevo.ganador, nuevo.numJugadores)[0]].id
     }
 
     const { data, error } = await supabase
@@ -1072,16 +1316,17 @@ export default function TrucoJuego() {
       .select('version')
 
     if (error || !data?.length) {
-      // Conflicto de versión (el rival escribió primero): resincronizar
+      // Conflicto de versión (otro escribió primero): resincronizar
       const { data: row } = await supabase
         .from('truco_partidas')
         .select('estado_juego, version')
         .eq('id', p.id)
         .single()
       if (row?.estado_juego) {
+        const sincronizado = normalizarEstado(row.estado_juego)
         versionRef.current = row.version
-        estadoRef.current = row.estado_juego as EstadoJuego
-        setEstadoJuego(row.estado_juego as EstadoJuego)
+        estadoRef.current = sincronizado
+        setEstadoJuego(sincronizado)
       }
     }
   }
@@ -1092,49 +1337,115 @@ export default function TrucoJuego() {
     setFase('flor')
   }
 
+  function toggleSeleccion(a: Amigo) {
+    setSeleccion(prev => {
+      if (prev.some(s => s.id === a.id)) return prev.filter(s => s.id !== a.id)
+      if (prev.length >= 3) return prev
+      return [...prev, a]
+    })
+  }
+
   async function confirmarFlor(cf: boolean) {
-    if (!usuario?.id || !amigoPendiente) return
+    if (!usuario?.id || !yo) return
+
+    // Mano a mano
+    if (amigoPendiente) {
+      const { data, error } = await supabase
+        .from('truco_partidas')
+        .insert({ jugador1: usuario.id, jugador2: amigoPendiente.id, con_flor: cf })
+        .select('id')
+        .single()
+      if (error || !data) {
+        Alert.alert('Error', mensajeError(error, 'No se pudo crear la partida. Probá de nuevo.'))
+        return
+      }
+      versionRef.current = 0
+      setEstadoJuego(null)
+      setAceptados([])
+      setPartida({ id: data.id, miAsiento: 0, jugadores: [yo, amigoPendiente], conFlor: cf, modo: 'mano' })
+      setFase('waiting')
+      return
+    }
+
+    // Parejas: seleccion = [compañero, rival1, rival2]
+    if (seleccion.length !== 3) return
+    const [companero, rival1, rival2] = seleccion
     const { data, error } = await supabase
       .from('truco_partidas')
-      .insert({ jugador1: usuario.id, jugador2: amigoPendiente.id, con_flor: cf })
+      .insert({
+        jugador1: usuario.id, jugador2: rival1.id,
+        jugador3: companero.id, jugador4: rival2.id,
+        modo: 'parejas', con_flor: cf,
+      })
       .select('id')
       .single()
     if (error || !data) {
-      Alert.alert('Error', 'No se pudo crear la partida. Probá de nuevo.')
+      Alert.alert('Error', mensajeError(error, 'No se pudo armar la mesa. Probá de nuevo.'))
       return
     }
     versionRef.current = 0
     setEstadoJuego(null)
-    setPartida({ id: data.id, miEquipo: 'p1', rival: amigoPendiente })
+    setAceptados([])
+    setPartida({
+      id: data.id, miAsiento: 0,
+      jugadores: [yo, rival1, companero, rival2],
+      conFlor: cf, modo: 'parejas',
+    })
     setFase('waiting')
   }
 
-  async function cancelarEspera() {
+  async function salirDeEspera() {
     const p = partidaRef.current
-    if (p) await supabase.from('truco_partidas').delete().eq('id', p.id).eq('estado', 'esperando')
+    // El creador cancela la mesa para todos; un invitado que ya aceptó
+    // solo vuelve al lobby (la mesa sigue esperando).
+    if (p && p.miAsiento === 0) {
+      await supabase.from('truco_partidas').delete().eq('id', p.id).eq('estado', 'esperando')
+    }
     setPartida(null)
     setEstadoJuego(null)
+    setSeleccion([])
     setFase('setup')
+    cargarPendientes()
   }
 
   async function aceptarInvitacion(inv: Invitacion) {
-    const inicialJuego = estadoInicial(inv.conFlor)
-    const { data } = await supabase
-      .from('truco_partidas')
-      .update({ estado: 'jugando', estado_juego: inicialJuego, version: 1, updated_at: new Date().toISOString() })
-      .eq('id', inv.id)
-      .eq('estado', 'esperando')
-      .select('id')
-    if (!data?.length) {
-      Alert.alert('Ups', 'La invitación ya no está disponible.')
+    // Mano a mano: aceptar arranca la partida directamente
+    if (inv.modo === 'mano') {
+      const inicialJuego = estadoInicial(inv.conFlor, 2)
+      const { data } = await supabase
+        .from('truco_partidas')
+        .update({ estado: 'jugando', estado_juego: inicialJuego, version: 1, updated_at: new Date().toISOString() })
+        .eq('id', inv.id)
+        .eq('estado', 'esperando')
+        .select('id')
+      if (!data?.length) {
+        Alert.alert('Ups', 'La invitación ya no está disponible.')
+        cargarPendientes()
+        return
+      }
+      versionRef.current = 1
+      estadoRef.current = inicialJuego
+      setEstadoJuego(inicialJuego)
+      setPartida({ id: inv.id, miAsiento: inv.miAsiento, jugadores: inv.jugadores, conFlor: inv.conFlor, modo: 'mano' })
+      setFase('game')
+      return
+    }
+
+    // Parejas: aceptación atómica; el último que acepta reparte
+    const { data, error } = await supabase.rpc('aceptar_truco', { p_partida: inv.id })
+    if (error || !data) {
+      Alert.alert('Ups', mensajeError(error, 'La invitación ya no está disponible.'))
       cargarPendientes()
       return
     }
-    versionRef.current = 1
-    estadoRef.current = inicialJuego
-    setEstadoJuego(inicialJuego)
-    setPartida({ id: inv.id, miEquipo: 'p2', rival: inv.de })
-    setFase('game')
+    const p: Partida = { id: inv.id, miAsiento: inv.miAsiento, jugadores: inv.jugadores, conFlor: inv.conFlor, modo: 'parejas' }
+    versionRef.current = 0
+    estadoRef.current = null
+    setEstadoJuego(null)
+    setAceptados((data as any).aceptados ?? [])
+    setPartida(p)
+    setFase('waiting')
+    if ((data as any).completo) iniciarPartida(p)
   }
 
   async function rechazarInvitacion(inv: Invitacion) {
@@ -1142,11 +1453,22 @@ export default function TrucoJuego() {
     cargarPendientes()
   }
 
+  function entrarMesa(m: MesaEspera) {
+    versionRef.current = 0
+    setEstadoJuego(null)
+    setAceptados(m.aceptados)
+    setPartida({ id: m.id, miAsiento: m.miAsiento, jugadores: m.jugadores, conFlor: m.conFlor, modo: m.modo })
+    setFase('waiting')
+  }
+
   function continuarPartida(p: PartidaActiva) {
     versionRef.current = p.version
     estadoRef.current = p.estadoJuego
     setEstadoJuego(p.estadoJuego)
-    setPartida({ id: p.id, miEquipo: p.miEquipo, rival: p.rival })
+    setPartida({
+      id: p.id, miAsiento: p.miAsiento, jugadores: p.jugadores,
+      conFlor: p.estadoJuego.conFlor, modo: p.jugadores.length === 4 ? 'parejas' : 'mano',
+    })
     setFase('game')
   }
 
@@ -1158,16 +1480,26 @@ export default function TrucoJuego() {
       router.back()
       return
     }
-    Alert.alert('¿Abandonar la partida?', `Si te vas, ${p.rival.nombre} gana la partida.`, [
+    const miEquipo = equipoDe(p.miAsiento)
+    const equipoRival = rivalDe(miEquipo)
+    const rivales = miembrosDe(equipoRival, s.numJugadores).map(a => p.jugadores[a])
+    const mensaje = s.numJugadores === 4
+      ? 'Si te vas, los rivales ganan la partida (tu compañero también pierde).'
+      : `Si te vas, ${rivales[0].nombre} gana la partida.`
+    Alert.alert('¿Abandonar la partida?', mensaje, [
       { text: 'Seguir jugando', style: 'cancel' },
       {
         text: 'Abandonar',
         style: 'destructive',
         onPress: async () => {
-          const fin: EstadoJuego = { ...s, ganador: rivalDe(p.miEquipo), abandonadoPor: p.miEquipo, pendiente: null }
+          const fin: EstadoJuego = {
+            ...s, ganador: equipoRival, pendiente: null,
+            abandonadoPor: miEquipo, abandonadoPorAsiento: p.miAsiento,
+          }
           await supabase.from('truco_partidas').update({
             estado: 'terminada',
-            ganador: p.rival.id,
+            ganador: rivales[0].id,
+            equipo_ganador: equipoRival,
             estado_juego: fin,
             version: versionRef.current + 1,
             updated_at: new Date().toISOString(),
@@ -1185,10 +1517,15 @@ export default function TrucoJuego() {
         c={c} modo={modo} setModo={setModo}
         amigos={amigos} cargando={cargando}
         invitaciones={invitaciones}
+        mesas={mesas}
         partidasActivas={partidasActivas}
+        seleccion={seleccion}
         onSeleccionarAmigo={seleccionarAmigo}
+        onToggleSeleccion={toggleSeleccion}
+        onContinuarParejas={() => { setAmigoPendiente(null); setFase('flor') }}
         onAceptarInv={aceptarInvitacion}
         onRechazarInv={rechazarInvitacion}
+        onEntrarMesa={entrarMesa}
         onContinuar={continuarPartida}
         onBack={() => router.back()}
       />
@@ -1199,7 +1536,9 @@ export default function TrucoJuego() {
     return (
       <PantallaFlor
         c={c}
-        amigo={amigoPendiente!}
+        descripcion={amigoPendiente
+          ? `¿Querés jugar con flor contra ${amigoPendiente.nombre}?`
+          : `Vos y ${seleccion[0]?.nombre} contra ${seleccion[1]?.nombre} y ${seleccion[2]?.nombre}. ¿Juegan con flor?`}
         onConfirmar={confirmarFlor}
         onBack={() => { setAmigoPendiente(null); setFase('setup') }}
       />
@@ -1210,8 +1549,10 @@ export default function TrucoJuego() {
     return (
       <PantallaWaiting
         c={c}
-        invitado={partida?.rival ?? amigoPendiente!}
-        onCancelar={cancelarEspera}
+        jugadores={partida?.jugadores ?? []}
+        aceptados={aceptados}
+        miAsiento={partida?.miAsiento ?? 0}
+        onSalir={salirDeEspera}
       />
     )
   }
@@ -1227,8 +1568,8 @@ export default function TrucoJuego() {
   return (
     <PantallaJuego
       c={c}
-      rival={partida.rival}
-      miEquipo={partida.miEquipo}
+      jugadores={partida.jugadores}
+      miAsiento={partida.miAsiento}
       estado={estadoJuego}
       onAccion={dispatch}
       onSalir={salirDelJuego}

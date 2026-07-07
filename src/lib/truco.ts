@@ -1,16 +1,26 @@
-// Lógica pura del Truco argentino — mano a mano, a 30 puntos.
+// Lógica pura del Truco argentino — mano a mano (1v1) y parejas (2v2), a 30 puntos.
 // Sin dependencias. El estado completo se serializa como jsonb en
-// truco_partidas.estado_juego; ambos clientes aplican acciones con `reducir`
+// truco_partidas.estado_juego; todos los clientes aplican acciones con `reducir`
 // y sincronizan por Supabase Realtime (control de versión optimista).
+//
+// Modelo: cada jugador ocupa un ASIENTO (0..n-1, en orden de juego). Los asientos
+// pares son del equipo 'p1' y los impares del equipo 'p2' (en la BD: jugador1 y
+// jugador3 vs jugador2 y jugador4). En 1v1 el asiento coincide con el equipo.
 //
 // Simplificaciones v1 (documentadas):
 // - "El envido está primero" no está implementado (no se puede responder envido a un truco).
-// - Flor: quien la canta primero gana 3 (o 6 si ambos tienen, gana la más alta). Sin contraflor.
+// - Flor: quien la canta primero resuelve; si el equipo rival también tiene flor se
+//   comparan las mejores de cada equipo (+6), si no +3. Sin contraflor.
+// - En parejas, el envido se resuelve comparando el mejor envido de cada equipo
+//   (sin la ronda de "son buenas" jugador por jugador).
+// - Irse al mazo lo decide cualquier jugador en su turno y arrastra a su equipo.
 // - Sin señas ni muestra (truco argentino clásico, no uruguayo).
 
 export type Palo = 'espada' | 'basto' | 'oro' | 'copa'
 export type Carta = { palo: Palo; numero: number } // 1-7, 10-12
 export type Equipo = 'p1' | 'p2'
+export type Asiento = number // 0..numJugadores-1, en orden de juego
+export type NumJugadores = 2 | 4
 export type EnvidoCanto = 'envido' | 'real' | 'falta'
 
 export type Pendiente =
@@ -18,27 +28,29 @@ export type Pendiente =
   | { tipo: 'envido'; chain: EnvidoCanto[]; por: Equipo }
 
 export type Evento =
-  | { id: number; tipo: 'canto'; por: Equipo; texto: string }
-  | { id: number; tipo: 'respuesta'; por: Equipo; quiero: boolean }
-  | { id: number; tipo: 'envido'; por: Equipo; datos: { p1: number; p2: number; ganador: Equipo; valor: number } }
-  | { id: number; tipo: 'flor'; por: Equipo; datos: { ganador: Equipo; valor: number; doble: boolean } }
-  | { id: number; tipo: 'mazo'; por: Equipo }
+  | { id: number; tipo: 'canto'; por: Asiento; texto: string }
+  | { id: number; tipo: 'respuesta'; por: Asiento; quiero: boolean }
+  | { id: number; tipo: 'envido'; por: Asiento; datos: { p1: number; p2: number; ganador: Equipo; valor: number } }
+  | { id: number; tipo: 'flor'; por: Asiento; datos: { ganador: Equipo; valor: number; doble: boolean } }
+  | { id: number; tipo: 'mazo'; por: Asiento }
 
 export type RazonFinMano = 'bazas' | 'noQuerido' | 'mazo'
 
 export type EstadoJuego = {
   conFlor: boolean
+  numJugadores: NumJugadores
   manoNum: number
-  manoDe: Equipo // quién es mano (juega primero) en esta mano
-  turno: Equipo
-  cartasIniciales: Record<Equipo, Carta[]>
-  cartas: Record<Equipo, Carta[]> // cartas que quedan en la mano
-  mesa: Record<Equipo, (Carta | null)[]> // carta jugada por baza [0..2]
+  manoDe: Asiento // quién es mano (reparte el anterior, juega primero) en esta mano
+  turno: Asiento
+  liderBaza: Asiento // quién salió en la baza actual (define el orden de juego)
+  cartasIniciales: Carta[][] // por asiento
+  cartas: Carta[][] // cartas que quedan en la mano, por asiento
+  mesa: (Carta | null)[][] // [asiento][baza 0..2]
   bazaActual: number
   bazas: (Equipo | 'parda')[]
   puntos: Record<Equipo, number>
   trucoNivel: 1 | 2 | 3 | 4 // valor actual de la mano
-  trucoPuedeSubir: Equipo | null // quién tiene derecho a subir (null: nadie cantó aún)
+  trucoPuedeSubir: Equipo | null // equipo con derecho a subir (null: nadie cantó aún)
   envidoResuelto: boolean
   florDe: Equipo | null
   pendiente: Pendiente | null
@@ -47,6 +59,7 @@ export type EstadoJuego = {
   resumenMano: { ganador: Equipo; puntos: number; razon: RazonFinMano } | null
   ganador: Equipo | null
   abandonadoPor?: Equipo
+  abandonadoPorAsiento?: Asiento
 }
 
 export type Accion =
@@ -59,6 +72,27 @@ export type Accion =
   | { tipo: 'nuevaMano' }
 
 export const PUNTOS_OBJETIVO = 30
+
+// ─── Asientos y equipos ───────────────────────────────────────────────────────
+
+export function equipoDe(a: Asiento): Equipo {
+  return a % 2 === 0 ? 'p1' : 'p2'
+}
+
+export function rivalDe(e: Equipo): Equipo {
+  return e === 'p1' ? 'p2' : 'p1'
+}
+
+export function miembrosDe(e: Equipo, n: NumJugadores): Asiento[] {
+  const out: Asiento[] = []
+  for (let a = e === 'p1' ? 0 : 1; a < n; a += 2) out.push(a)
+  return out
+}
+
+/** Compañero de un asiento (solo tiene sentido con 4 jugadores). */
+export function companeroDe(a: Asiento, n: NumJugadores): Asiento | null {
+  return n === 4 ? (a + 2) % 4 : null
+}
 
 // ─── Cartas ───────────────────────────────────────────────────────────────────
 
@@ -125,27 +159,31 @@ export function valorFlor(cartas: Carta[]): number {
   return 20 + cartas.reduce((s, c) => s + valorEnvidoCarta(c), 0)
 }
 
-export function rivalDe(e: Equipo): Equipo {
-  return e === 'p1' ? 'p2' : 'p1'
+/** Mejor envido entre los miembros del equipo (con sus cartas iniciales). */
+function mejorEnvidoEquipo(s: EstadoJuego, e: Equipo): number {
+  return Math.max(...miembrosDe(e, s.numJugadores).map(a => envidoDe(s.cartasIniciales[a])))
 }
 
 // ─── Reparto ──────────────────────────────────────────────────────────────────
 
 function repartir(base: {
-  conFlor: boolean; manoNum: number; manoDe: Equipo
+  conFlor: boolean; numJugadores: NumJugadores; manoNum: number; manoDe: Asiento
   puntos: Record<Equipo, number>; eventoSeq: number
 }): EstadoJuego {
   const mazo = mezclar(mazoCompleto())
-  const p1 = mazo.slice(0, 3)
-  const p2 = mazo.slice(3, 6)
+  const n = base.numJugadores
+  const manos: Carta[][] = []
+  for (let a = 0; a < n; a++) manos.push(mazo.slice(a * 3, a * 3 + 3))
   return {
     conFlor: base.conFlor,
+    numJugadores: n,
     manoNum: base.manoNum,
     manoDe: base.manoDe,
     turno: base.manoDe,
-    cartasIniciales: { p1, p2 },
-    cartas: { p1: [...p1], p2: [...p2] },
-    mesa: { p1: [null, null, null], p2: [null, null, null] },
+    liderBaza: base.manoDe,
+    cartasIniciales: manos,
+    cartas: manos.map(m => [...m]),
+    mesa: manos.map(() => [null, null, null]),
     bazaActual: 0,
     bazas: [],
     puntos: base.puntos,
@@ -161,21 +199,68 @@ function repartir(base: {
   }
 }
 
-export function estadoInicial(conFlor: boolean): EstadoJuego {
-  return repartir({ conFlor, manoNum: 0, manoDe: 'p1', puntos: { p1: 0, p2: 0 }, eventoSeq: 0 })
+export function estadoInicial(conFlor: boolean, numJugadores: NumJugadores = 2): EstadoJuego {
+  return repartir({ conFlor, numJugadores, manoNum: 0, manoDe: 0, puntos: { p1: 0, p2: 0 }, eventoSeq: 0 })
+}
+
+// ─── Compatibilidad con estados viejos (formato 1v1 con records p1/p2) ────────
+
+/** Convierte estados guardados antes del modo parejas (cartas/mesa como {p1,p2}). */
+export function normalizarEstado(raw: unknown): EstadoJuego {
+  const r = raw as any
+  if (Array.isArray(r.cartas)) return r as EstadoJuego
+  const seat = (e: 'p1' | 'p2'): Asiento => (e === 'p1' ? 0 : 1)
+  return {
+    conFlor: r.conFlor,
+    numJugadores: 2,
+    manoNum: r.manoNum,
+    manoDe: seat(r.manoDe),
+    turno: seat(r.turno),
+    liderBaza: seat(r.manoDe),
+    cartasIniciales: [r.cartasIniciales.p1, r.cartasIniciales.p2],
+    cartas: [r.cartas.p1, r.cartas.p2],
+    mesa: [r.mesa.p1, r.mesa.p2],
+    bazaActual: r.bazaActual,
+    bazas: r.bazas,
+    puntos: r.puntos,
+    trucoNivel: r.trucoNivel,
+    trucoPuedeSubir: r.trucoPuedeSubir,
+    envidoResuelto: r.envidoResuelto,
+    florDe: r.florDe,
+    pendiente: r.pendiente,
+    eventoSeq: r.eventoSeq,
+    evento: r.evento ? { ...r.evento, por: seat(r.evento.por) } : null,
+    resumenMano: r.resumenMano,
+    ganador: r.ganador,
+    abandonadoPor: r.abandonadoPor,
+    abandonadoPorAsiento: r.abandonadoPor ? seat(r.abandonadoPor) : undefined,
+  }
 }
 
 // ─── Resolución de bazas y mano ───────────────────────────────────────────────
 
-function ganadorBaza(c1: Carta, c2: Carta): Equipo | 'parda' {
-  const j1 = jerarquia(c1)
-  const j2 = jerarquia(c2)
-  if (j1 === j2) return 'parda'
-  return j1 > j2 ? 'p1' : 'p2'
+/**
+ * Resuelve la baza con las cartas de todos los asientos.
+ * Parda solo si las cartas más altas son de equipos distintos; si empatan dos
+ * del mismo equipo, gana ese equipo y sale el que jugó primero (orden desde el líder).
+ */
+function resolverBaza(
+  cartasBaza: Carta[], lider: Asiento, n: NumJugadores,
+): { resultado: Equipo | 'parda'; sale: Asiento | null } {
+  const jer = cartasBaza.map(jerarquia)
+  const max = Math.max(...jer)
+  const ganadores: Asiento[] = []
+  for (let a = 0; a < n; a++) if (jer[a] === max) ganadores.push(a)
+  const equipos = new Set(ganadores.map(equipoDe))
+  if (equipos.size > 1) return { resultado: 'parda', sale: null }
+  // Sale el ganador que jugó primero en el orden de la baza
+  const orden = (a: Asiento) => (a - lider + n) % n
+  const sale = ganadores.reduce((mejor, a) => (orden(a) < orden(mejor) ? a : mejor))
+  return { resultado: equipoDe(sale), sale }
 }
 
 /** Ganador de la mano según bazas jugadas (null si aún no se define). */
-export function ganadorMano(bazas: (Equipo | 'parda')[], manoDe: Equipo): Equipo | null {
+export function ganadorMano(bazas: (Equipo | 'parda')[], equipoMano: Equipo): Equipo | null {
   if (bazas.length < 2) return null
   const [b1, b2, b3] = bazas
   if (b1 !== 'parda' && b2 !== 'parda') {
@@ -186,7 +271,7 @@ export function ganadorMano(bazas: (Equipo | 'parda')[], manoDe: Equipo): Equipo
   if (b1 === 'parda') {
     if (b2 !== 'parda') return b2 // parda la primera, gana quien gana la segunda
     if (bazas.length < 3) return null
-    return b3 === 'parda' ? manoDe : b3 // todas pardas: gana el mano
+    return b3 === 'parda' ? equipoMano : b3 // todas pardas: gana el equipo mano
   }
   return b1 // primera ganada + segunda parda: gana quien ganó la primera
 }
@@ -244,11 +329,12 @@ function finDeMano(s: EstadoJuego, ganador: Equipo, pts: number, razon: RazonFin
 
 // ─── Acciones disponibles (para la UI) ────────────────────────────────────────
 
-export function accionesDisponibles(s: EstadoJuego, yo: Equipo) {
+export function accionesDisponibles(s: EstadoJuego, yo: Asiento) {
+  const miEquipo = equipoDe(yo)
   const bloqueado = !!(s.resumenMano || s.pendiente || s.ganador)
   const miTurno = s.turno === yo
   const trucoOk = !bloqueado && miTurno && s.trucoNivel < 4
-    && (s.trucoPuedeSubir === null || s.trucoPuedeSubir === yo)
+    && (s.trucoPuedeSubir === null || s.trucoPuedeSubir === miEquipo)
   const envidoOk = !bloqueado && miTurno && s.bazaActual === 0
     && !s.envidoResuelto && s.florDe === null
   const florBase = s.conFlor && !s.ganador && !s.resumenMano && s.bazaActual === 0
@@ -256,12 +342,13 @@ export function accionesDisponibles(s: EstadoJuego, yo: Equipo) {
   const florOk = florBase && (
     s.pendiente === null
       ? miTurno
-      : s.pendiente.tipo === 'envido' && s.pendiente.por !== yo // flor mata envido
+      : s.pendiente.tipo === 'envido' && s.pendiente.por !== miEquipo // flor mata envido
   )
   const mazoOk = !bloqueado && miTurno
   const jugarOk = !bloqueado && miTurno
+  const responderOk = !s.resumenMano && !s.ganador && !!s.pendiente && s.pendiente.por !== miEquipo
   const trucoLabel = s.trucoNivel === 1 ? 'Truco' : s.trucoNivel === 2 ? 'Retruco' : 'Vale 4'
-  return { trucoOk, envidoOk, florOk, mazoOk, jugarOk, trucoLabel }
+  return { trucoOk, envidoOk, florOk, mazoOk, jugarOk, responderOk, trucoLabel }
 }
 
 /** Subidas de envido válidas dada la cadena actual. */
@@ -275,17 +362,21 @@ export function subidasEnvido(chain: EnvidoCanto[]): EnvidoCanto[] {
 
 // ─── Reducer ──────────────────────────────────────────────────────────────────
 
-export function reducir(prev: EstadoJuego, accion: Accion, actor: Equipo): EstadoJuego {
+export function reducir(prev: EstadoJuego, accion: Accion, actor: Asiento): EstadoJuego {
   if (prev.ganador && accion.tipo !== 'nuevaMano') return prev
-  const otro = rivalDe(actor)
+  if (actor < 0 || actor >= prev.numJugadores) return prev
+  const n = prev.numJugadores
+  const miEquipo = equipoDe(actor)
+  const otroEquipo = rivalDe(miEquipo)
 
   switch (accion.tipo) {
     case 'nuevaMano': {
       if (!prev.resumenMano || prev.ganador) return prev
       return repartir({
         conFlor: prev.conFlor,
+        numJugadores: n,
         manoNum: prev.manoNum + 1,
-        manoDe: rivalDe(prev.manoDe),
+        manoDe: (prev.manoDe + 1) % n,
         puntos: prev.puntos,
         eventoSeq: prev.eventoSeq,
       })
@@ -297,44 +388,47 @@ export function reducir(prev: EstadoJuego, accion: Accion, actor: Equipo): Estad
       const s = clonar(prev)
       const carta = s.cartas[actor].splice(accion.idx, 1)[0]
       s.mesa[actor][s.bazaActual] = carta
-      const cartaOtro = s.mesa[otro][s.bazaActual]
-      if (!cartaOtro) {
-        s.turno = otro
+      const jugadas = s.mesa.filter(m => m[s.bazaActual]).length
+      if (jugadas < n) {
+        s.turno = (actor + 1) % n
         return s
       }
       // Baza completa: resolver
-      const res = ganadorBaza(s.mesa.p1[s.bazaActual]!, s.mesa.p2[s.bazaActual]!)
-      s.bazas.push(res)
-      const gm = ganadorMano(s.bazas, s.manoDe)
+      const cartasBaza = s.mesa.map(m => m[s.bazaActual]!)
+      const { resultado, sale } = resolverBaza(cartasBaza, s.liderBaza, n)
+      s.bazas.push(resultado)
+      const gm = ganadorMano(s.bazas, equipoDe(s.manoDe))
       if (gm) {
         finDeMano(s, gm, s.trucoNivel, 'bazas')
       } else {
         s.bazaActual += 1
-        s.turno = res === 'parda' ? s.manoDe : res
+        const lider = resultado === 'parda' || sale === null ? s.manoDe : sale
+        s.turno = lider
+        s.liderBaza = lider
       }
       return s
     }
 
     case 'cantarTruco': {
       if (prev.resumenMano) return prev
-      // ¿Es una subida en respuesta a un truco pendiente del rival?
+      // ¿Es una subida en respuesta a un truco pendiente del equipo rival?
       if (prev.pendiente) {
-        if (prev.pendiente.tipo !== 'truco' || prev.pendiente.por === actor) return prev
+        if (prev.pendiente.tipo !== 'truco' || prev.pendiente.por === miEquipo) return prev
         if (prev.pendiente.nivel >= 4) return prev
         const s = clonar(prev)
         const pend = s.pendiente as Extract<Pendiente, { tipo: 'truco' }>
         s.trucoNivel = pend.nivel // subir implica querer el canto anterior
         const nuevoNivel = (pend.nivel + 1) as 3 | 4
-        s.pendiente = { tipo: 'truco', nivel: nuevoNivel, por: actor }
+        s.pendiente = { tipo: 'truco', nivel: nuevoNivel, por: miEquipo }
         emitir(s, { tipo: 'canto', por: actor, texto: etiquetaTruco(nuevoNivel) })
         return s
       }
       // Canto nuevo en mi turno
       if (prev.turno !== actor || prev.trucoNivel >= 4) return prev
-      if (prev.trucoPuedeSubir !== null && prev.trucoPuedeSubir !== actor) return prev
+      if (prev.trucoPuedeSubir !== null && prev.trucoPuedeSubir !== miEquipo) return prev
       const s = clonar(prev)
       const nivel = (s.trucoNivel + 1) as 2 | 3 | 4
-      s.pendiente = { tipo: 'truco', nivel, por: actor }
+      s.pendiente = { tipo: 'truco', nivel, por: miEquipo }
       emitir(s, { tipo: 'canto', por: actor, texto: etiquetaTruco(nivel) })
       return s
     }
@@ -343,19 +437,19 @@ export function reducir(prev: EstadoJuego, accion: Accion, actor: Equipo): Estad
       if (prev.resumenMano || prev.envidoResuelto || prev.florDe) return prev
       if (prev.bazaActual !== 0) return prev
       if (prev.pendiente) {
-        // Subida en respuesta a un envido pendiente del rival
-        if (prev.pendiente.tipo !== 'envido' || prev.pendiente.por === actor) return prev
+        // Subida en respuesta a un envido pendiente del equipo rival
+        if (prev.pendiente.tipo !== 'envido' || prev.pendiente.por === miEquipo) return prev
         if (!subidasEnvido(prev.pendiente.chain).includes(accion.canto)) return prev
         const s = clonar(prev)
         const pend = s.pendiente as Extract<Pendiente, { tipo: 'envido' }>
-        s.pendiente = { tipo: 'envido', chain: [...pend.chain, accion.canto], por: actor }
+        s.pendiente = { tipo: 'envido', chain: [...pend.chain, accion.canto], por: miEquipo }
         emitir(s, { tipo: 'canto', por: actor, texto: etiquetaEnvido(accion.canto) })
         return s
       }
       // Canto inicial en mi turno
       if (prev.turno !== actor) return prev
       const s = clonar(prev)
-      s.pendiente = { tipo: 'envido', chain: [accion.canto], por: actor }
+      s.pendiente = { tipo: 'envido', chain: [accion.canto], por: miEquipo }
       emitir(s, { tipo: 'canto', por: actor, texto: etiquetaEnvido(accion.canto) })
       return s
     }
@@ -365,15 +459,19 @@ export function reducir(prev: EstadoJuego, accion: Accion, actor: Equipo): Estad
       if (!disp.florOk) return prev
       const s = clonar(prev)
       s.pendiente = null // la flor mata al envido pendiente
-      s.florDe = actor
+      s.florDe = miEquipo
       s.envidoResuelto = true
-      const doble = tieneFlor(s.cartasIniciales[otro])
-      let ganadorFlor: Equipo = actor
+      const floresMias = miembrosDe(miEquipo, n)
+        .map(a => s.cartasIniciales[a]).filter(tieneFlor)
+      const floresRival = miembrosDe(otroEquipo, n)
+        .map(a => s.cartasIniciales[a]).filter(tieneFlor)
+      const doble = floresRival.length > 0
+      let ganadorFlor: Equipo = miEquipo
       let valor = 3
       if (doble) {
-        const fa = valorFlor(s.cartasIniciales[actor])
-        const fo = valorFlor(s.cartasIniciales[otro])
-        ganadorFlor = fa === fo ? s.manoDe : fa > fo ? actor : otro
+        const fMia = Math.max(...floresMias.map(valorFlor))
+        const fRival = Math.max(...floresRival.map(valorFlor))
+        ganadorFlor = fMia === fRival ? equipoDe(s.manoDe) : fMia > fRival ? miEquipo : otroEquipo
         valor = 6
       }
       sumarPuntos(s, ganadorFlor, valor)
@@ -383,13 +481,13 @@ export function reducir(prev: EstadoJuego, accion: Accion, actor: Equipo): Estad
 
     case 'responder': {
       const pend = prev.pendiente
-      if (!pend || pend.por === actor || prev.resumenMano) return prev
+      if (!pend || pend.por === miEquipo || prev.resumenMano) return prev
       const s = clonar(prev)
 
       if (pend.tipo === 'truco') {
         if (accion.quiero) {
           s.trucoNivel = pend.nivel
-          s.trucoPuedeSubir = actor // quien acepta tiene derecho a subir después
+          s.trucoPuedeSubir = miEquipo // el equipo que acepta tiene derecho a subir después
           s.pendiente = null
           emitir(s, { tipo: 'respuesta', por: actor, quiero: true })
         } else {
@@ -403,9 +501,9 @@ export function reducir(prev: EstadoJuego, accion: Accion, actor: Equipo): Estad
       // envido
       if (accion.quiero) {
         const valor = valorEnvidoChain(pend.chain, s.puntos, true)
-        const e1 = envidoDe(s.cartasIniciales.p1)
-        const e2 = envidoDe(s.cartasIniciales.p2)
-        const ganadorEnv: Equipo = e1 === e2 ? s.manoDe : e1 > e2 ? 'p1' : 'p2'
+        const e1 = mejorEnvidoEquipo(s, 'p1')
+        const e2 = mejorEnvidoEquipo(s, 'p2')
+        const ganadorEnv: Equipo = e1 === e2 ? equipoDe(s.manoDe) : e1 > e2 ? 'p1' : 'p2'
         s.envidoResuelto = true
         s.pendiente = null
         sumarPuntos(s, ganadorEnv, valor)
@@ -426,7 +524,7 @@ export function reducir(prev: EstadoJuego, accion: Accion, actor: Equipo): Estad
       let pts: number = s.trucoNivel
       if (s.bazaActual === 0 && !s.envidoResuelto) pts += 1 // mazo en primera sin envido: +1
       emitir(s, { tipo: 'mazo', por: actor })
-      finDeMano(s, otro, pts, 'mazo')
+      finDeMano(s, otroEquipo, pts, 'mazo')
       return s
     }
 

@@ -34,6 +34,8 @@ const MENSAJES: Record<string, string> = {
   'sin_propuesta':                    'No hay ningún resultado propuesto para confirmar.',
   'transicion_invalida':              'Esa acción no está permitida en este estado.',
   'deudas_pendientes':                'No se puede bloquear: tienen deudas pendientes entre ustedes. Salden las deudas primero.',
+  'partida_no_disponible':            'La partida ya no está disponible.',
+  'no_invitado':                      'No estás invitado a esa partida.',
 }
 
 export function mensajeError(error: unknown, fallback = 'Ocurrió un error. Intentá de nuevo.'): string {
