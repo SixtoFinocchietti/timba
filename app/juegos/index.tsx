@@ -8,6 +8,7 @@ import { AppIcon, IconName } from '@/components/ui/AppIcon'
 const JUEGOS: { id: string; nombre: string; descripcion: string; icono: IconName }[] = [
   { id: 'truco', nombre: 'Truco', descripcion: 'Versión argentina', icono: 'machoEspada' },
   { id: 'poker', nombre: 'Póker', descripcion: "Texas Hold'em", icono: 'poker' },
+  { id: 'blackjack', nombre: 'Blackjack', descripcion: '21 · Banca rotativa', icono: 'poker' },
 ]
 
 export default function Juegos() {
