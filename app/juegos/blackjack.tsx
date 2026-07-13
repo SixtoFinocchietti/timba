@@ -29,6 +29,9 @@ export default function BlackjackConfig() {
   const { usuario } = useAuthStore()
 
   const [fichas, setFichas] = useState<FichasVal>(5000)
+  const [corona, setCorona] = useState(true)
+  const [coronaPct, setCoronaPct] = useState(25)
+  const [infoCorona, setInfoCorona] = useState(false)
 
   const [sheetVisible, setSheetVisible] = useState(false)
   const [busqueda, setBusqueda] = useState('')
@@ -119,6 +122,8 @@ export default function BlackjackConfig() {
 
     const contenido = JSON.stringify({
       fichas,
+      corona,
+      coronaPct,
       hostId: usuario.id,
       hostNombre: usuario.nombre ?? '',
     })
@@ -140,6 +145,8 @@ export default function BlackjackConfig() {
         amigo: seleccionado.nombre,
         amigoId: seleccionado.id,
         fichas: String(fichas),
+        corona: corona ? '1' : '0',
+        coronaPct: String(coronaPct),
         modo_sala: 'host',
       },
     } as any)
@@ -172,9 +179,9 @@ export default function BlackjackConfig() {
               <Text style={[es.seccionLabel, { color: c.textoSuave }]}>Te invitaron a jugar</Text>
               <View style={{ gap: 10 }}>
                 {invitaciones.map(inv => {
-                  let cfg = { fichas: 5000, hostId: '', hostNombre: '' }
+                  let cfg = { fichas: 5000, corona: true, coronaPct: 25, hostId: '', hostNombre: '' }
                   try { Object.assign(cfg, JSON.parse(inv.contenido ?? '{}')) } catch {}
-                  const resumen = `${cfg.fichas.toLocaleString('es-AR')} fichas · Banca rotativa`
+                  const resumen = `${cfg.fichas.toLocaleString('es-AR')} fichas · ${cfg.corona ? `Corona ${cfg.coronaPct}%` : 'Sin corona'}`
                   const inicial = (inv.emisorNombre?.[0] ?? '?').toUpperCase()
                   return (
                     <View key={inv.id} style={[es.invCard, { backgroundColor: 'rgba(201,168,76,0.08)', borderColor: c.primario }]}>
@@ -197,6 +204,8 @@ export default function BlackjackConfig() {
                             amigo: cfg.hostNombre || inv.emisorNombre,
                             amigoId: cfg.hostId || inv.emisor_id,
                             fichas: String(cfg.fichas),
+                            corona: cfg.corona ? '1' : '0',
+                            coronaPct: String(cfg.coronaPct),
                             modo_sala: 'invitado',
                           },
                         } as any)}
@@ -231,20 +240,69 @@ export default function BlackjackConfig() {
         <View style={[es.divider, { backgroundColor: c.borde }]} />
 
         <View style={es.seccion}>
+          <View style={es.coronaTituloRow}>
+            <Text style={[es.seccionTitulo, { color: c.texto, marginBottom: 0 }]}>Corona</Text>
+            <TouchableOpacity
+              onPress={() => setInfoCorona(true)}
+              hitSlop={10}
+              activeOpacity={0.7}
+              style={[es.infoBtn, { borderColor: c.borde }]}
+            >
+              <Text style={[es.infoTxt, { color: c.primario }]}>i</Text>
+            </TouchableOpacity>
+          </View>
+          <View style={[es.coronaRow, { marginBottom: corona ? 18 : 0 }]}>
+            {[{ v: true, l: 'Con corona' }, { v: false, l: 'Sin corona' }].map(o => {
+              const activo = corona === o.v
+              return (
+                <TouchableOpacity
+                  key={o.l}
+                  onPress={() => setCorona(o.v)}
+                  activeOpacity={0.8}
+                  style={[es.coronaPill, { flex: 1, borderColor: activo ? c.primario : c.borde, backgroundColor: activo ? 'rgba(201,168,76,0.1)' : c.fondoCard }]}
+                >
+                  <Text style={{ color: activo ? c.primario : c.textoSuave, fontSize: 15, fontWeight: '700' }}>{o.l}</Text>
+                </TouchableOpacity>
+              )
+            })}
+          </View>
+          {corona && (
+            <>
+              <Text style={[es.seccionLabel, { color: c.textoSuave, marginBottom: 12 }]}>Bonus (% de la apuesta)</Text>
+              <View style={es.coronaRow}>
+                {[5, 10, 25, 50].map(p => {
+                  const activo = coronaPct === p
+                  return (
+                    <TouchableOpacity
+                      key={p}
+                      onPress={() => setCoronaPct(p)}
+                      activeOpacity={0.8}
+                      style={[es.coronaPill, { borderColor: activo ? c.primario : c.borde, backgroundColor: activo ? 'rgba(201,168,76,0.1)' : c.fondoCard }]}
+                    >
+                      <Text style={{ color: activo ? c.primario : c.textoSuave, fontSize: 15, fontWeight: '700' }}>{p}%</Text>
+                    </TouchableOpacity>
+                  )
+                })}
+              </View>
+            </>
+          )}
+        </View>
+        <View style={[es.divider, { backgroundColor: c.borde }]} />
+
+        <View style={es.seccion}>
           <Text style={[es.seccionTitulo, { color: c.texto }]}>Cómo se juega</Text>
           <View style={{ gap: 10 }}>
             <Text style={[es.reglaTexto, { color: c.textoSuave }]}>
-              • En cada mano uno es <Text style={{ color: c.primario, fontWeight: '700' }}>la banca</Text> y
-              el otro apuesta. Los roles se alternan mano a mano.
+              • Los dos juegan contra el <Text style={{ color: c.primario, fontWeight: '700' }}>dealer</Text>, cada uno con su apuesta.
             </Text>
             <Text style={[es.reglaTexto, { color: c.textoSuave }]}>
-              • El jugador intenta acercarse a 21 sin pasarse. Puede pedir carta, plantarse o doblar la apuesta.
+              • Acercate a 21 sin pasarte: pedí carta, plantate o doblá la apuesta.
             </Text>
             <Text style={[es.reglaTexto, { color: c.textoSuave }]}>
-              • La banca juega automática: pide hasta llegar a 17.
+              • Le ganás al dealer y cobrás; el blackjack natural paga 3:2.
             </Text>
             <Text style={[es.reglaTexto, { color: c.textoSuave }]}>
-              • Blackjack natural (21 con dos cartas) paga 3:2.
+              • Con la <Text style={{ color: c.primario, fontWeight: '700' }}>corona</Text>, el de mejor mano se lleva un bonus del rival.
             </Text>
           </View>
         </View>
@@ -355,6 +413,25 @@ export default function BlackjackConfig() {
           </View>
         </View>
       </Modal>
+
+      {/* Info: qué es la corona */}
+      <Modal visible={infoCorona} transparent animationType="fade" statusBarTranslucent onRequestClose={() => setInfoCorona(false)}>
+        <Pressable style={es.infoOverlay} onPress={() => setInfoCorona(false)}>
+          <Pressable style={[es.infoCard, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+            <Text style={[es.infoCardTitulo, { color: c.texto }]}>¿Qué es la corona? 👑</Text>
+            <Text style={[es.infoCardCuerpo, { color: c.textoSuave }]}>
+              Los dos juegan cada uno contra la banca. Además compiten entre sí: el que hace la mejor mano (más cerca de 21 sin pasarse) se lleva la corona.
+              {'\n\n'}
+              El ganador cobra un bonus igual a ese porcentaje de su apuesta, que le paga el rival. No afecta lo que ganás o perdés contra la banca.
+              {'\n\n'}
+              Si los dos se pasan o empatan, no hay corona.
+            </Text>
+            <TouchableOpacity style={[es.infoCardBtn, { backgroundColor: c.primario }]} onPress={() => setInfoCorona(false)} activeOpacity={0.85}>
+              <Text style={{ color: c.fondo, fontWeight: '800', fontSize: 15 }}>Entendido</Text>
+            </TouchableOpacity>
+          </Pressable>
+        </Pressable>
+      </Modal>
     </View>
   )
 }
@@ -379,6 +456,16 @@ function makeEstilos(c: ColoresTema) {
     opcionGrande: { fontSize: 18 },
     opcionActivaGrande: { fontSize: 18, fontWeight: '700' },
     reglaTexto: { fontSize: 14, lineHeight: 20 },
+    coronaTituloRow: { flexDirection: 'row', alignItems: 'center', gap: 8, marginBottom: 14 },
+    infoBtn: { width: 22, height: 22, borderRadius: 11, borderWidth: 1.5, alignItems: 'center', justifyContent: 'center' },
+    infoTxt: { fontSize: 13, fontWeight: '800', fontStyle: 'italic' },
+    coronaRow: { flexDirection: 'row', gap: 10 },
+    coronaPill: { paddingHorizontal: 18, paddingVertical: 12, borderRadius: 14, borderWidth: 1.5, alignItems: 'center' },
+    infoOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)', alignItems: 'center', justifyContent: 'center', padding: 28 },
+    infoCard: { width: '100%', maxWidth: 380, borderRadius: 20, borderWidth: 1, padding: 22 },
+    infoCardTitulo: { fontSize: 19, fontWeight: '800', marginBottom: 12 },
+    infoCardCuerpo: { fontSize: 14, lineHeight: 21 },
+    infoCardBtn: { height: 48, borderRadius: 14, alignItems: 'center', justifyContent: 'center', marginTop: 20 },
     divider: { height: 1, marginHorizontal: 24 },
     footer: {
       paddingHorizontal: 24,

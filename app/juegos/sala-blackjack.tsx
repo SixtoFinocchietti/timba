@@ -6,7 +6,7 @@ import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { useState, useEffect } from 'react'
 import { supabase } from '@/lib/supabase'
-import { estadoInicial } from '@/lib/blackjack'
+import { estadoInicialClasicoOnline } from '@/lib/blackjackClasicoOnline'
 
 function formatFichas(n: number) {
   return n.toLocaleString('es-AR')
@@ -21,14 +21,18 @@ export default function SalaBlackjack() {
     amigo: string
     amigoId: string
     fichas: string
+    corona: string
+    coronaPct: string
     modo_sala: string
   }>()
 
   const amigoNombre = params.amigo ?? 'Amigo'
   const fichasNum = parseInt(params.fichas ?? '5000', 10)
+  const coronaActiva = params.corona !== '0'
+  const coronaPct = parseInt(params.coronaPct ?? '25', 10)
   const fichasLabel = formatFichas(fichasNum)
 
-  const subtitulo = `${fichasLabel} fichas · Banca rotativa · Paga 3:2`
+  const subtitulo = `${fichasLabel} fichas · ${coronaActiva ? `Corona ${coronaPct}%` : 'Sin corona'} · Paga 3:2`
 
   const tuNombre = usuario?.nombre ?? 'tú'
   const tuInicial = tuNombre.charAt(0).toUpperCase()
@@ -70,10 +74,10 @@ export default function SalaBlackjack() {
     const canal = supabase
       .channel('sala-blackjack-inicio')
       .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'partidas_blackjack',
+        event: 'INSERT', schema: 'public', table: 'partidas_blackjack_clasico',
         filter: `invitado_id=eq.${usuario.id}`,
       }, payload => {
-        router.replace({ pathname: '/juegos/partida-blackjack', params: { partidaId: payload.new.id } } as any)
+        router.replace({ pathname: '/juegos/partida-blackjack-clasico', params: { partidaId: payload.new.id } } as any)
       })
       .subscribe()
     return () => { supabase.removeChannel(canal) }
@@ -84,6 +88,8 @@ export default function SalaBlackjack() {
     setReenviando(true)
     const contenido = JSON.stringify({
       fichas: fichasNum,
+      corona: coronaActiva,
+      coronaPct,
       hostId: usuario.id,
       hostNombre: usuario?.nombre ?? '',
     })
@@ -99,9 +105,9 @@ export default function SalaBlackjack() {
   async function empezarPartida() {
     if (!usuario?.id || !params.amigoId) return
     setCreando(true)
-    const config = estadoInicial(fichasNum)
+    const config = estadoInicialClasicoOnline(fichasNum, coronaActiva, coronaPct)
     const { data, error } = await supabase
-      .from('partidas_blackjack')
+      .from('partidas_blackjack_clasico')
       .insert({
         host_id: usuario.id,
         invitado_id: params.amigoId,
@@ -111,7 +117,7 @@ export default function SalaBlackjack() {
       .single()
     setCreando(false)
     if (error || !data) return
-    router.replace({ pathname: '/juegos/partida-blackjack', params: { partidaId: data.id } } as any)
+    router.replace({ pathname: '/juegos/partida-blackjack-clasico', params: { partidaId: data.id } } as any)
   }
 
   return (
