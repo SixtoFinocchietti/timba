@@ -1,9 +1,11 @@
-import { useState } from 'react'
+import { useCallback, useState } from 'react'
 import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable } from 'react-native'
-import { router } from 'expo-router'
+import { router, useFocusEffect } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
+import { CLAVE_PROGRESO, LECCIONES } from '@/lib/pool/tutorial'
 
 // Menú del Pool (spec §2.1). Fases 2-3: práctica libre y 8-ball vs Bot;
 // tutorial y online llegan en las fases 4-5 — se muestran como próximamente
@@ -15,9 +17,9 @@ const MODOS: {
   descripcion: string
   disponible: boolean
 }[] = [
+  { id: 'tutorial', nombre: 'Tutorial', descripcion: 'Aprendé controles, reglas y efectos en 3 minutos', disponible: true },
   { id: 'practica', nombre: 'Práctica libre', descripcion: 'Mesa sola, sin reglas: tirá y probá efectos', disponible: true },
   { id: 'bot', nombre: 'Jugar vs Bot', descripcion: '8-Ball con reglas · Fácil, Normal o Difícil', disponible: true },
-  { id: 'tutorial', nombre: 'Tutorial', descripcion: 'Aprendé controles, reglas y efectos', disponible: false },
   { id: 'amigo', nombre: 'Con un amigo', descripcion: 'Partida online con invitación', disponible: false },
 ]
 
@@ -31,8 +33,18 @@ export default function PoolMenu() {
   const c = useColores()
   const es = makeEstilos(c)
   const [sheetBot, setSheetBot] = useState(false)
+  const [progresoTutorial, setProgresoTutorial] = useState(0)
+
+  useFocusEffect(
+    useCallback(() => {
+      AsyncStorage.getItem(CLAVE_PROGRESO).then(v => {
+        setProgresoTutorial(v ? (JSON.parse(v) as string[]).length : 0)
+      })
+    }, []),
+  )
 
   function abrir(id: string) {
+    if (id === 'tutorial') router.push('/juegos/tutorial-pool' as any)
     if (id === 'practica') router.push('/juegos/partida-pool' as any)
     if (id === 'bot') setSheetBot(true)
   }
@@ -69,7 +81,12 @@ export default function PoolMenu() {
             disabled={!m.disponible}
           >
             <View style={es.cardTexto}>
-              <Text style={[es.cardNombre, { color: c.texto }]}>{m.nombre}</Text>
+              <Text style={[es.cardNombre, { color: c.texto }]}>
+                {m.nombre}
+                {m.id === 'tutorial' && progresoTutorial > 0
+                  ? `  ·  ${progresoTutorial}/${LECCIONES.length}${progresoTutorial === LECCIONES.length ? ' ✓' : ''}`
+                  : ''}
+              </Text>
               <Text style={[es.cardDesc, { color: c.textoSuave }]}>{m.descripcion}</Text>
             </View>
             {m.disponible ? (
