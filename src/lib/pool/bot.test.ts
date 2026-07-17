@@ -11,7 +11,7 @@ import { EstadoJuego, aplicarEleccionRebreak, crearEstadoInicial, resolverTiro }
 import { Bola } from './tipos'
 
 function bola(n: number, x: number, y: number): Bola {
-  return { n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true, rot: 0 }
+  return { n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true, rot: 0, dirX: 0, dirY: 1 }
 }
 
 function estadoAsignados(turno: 'A' | 'B' = 'A'): EstadoJuego {

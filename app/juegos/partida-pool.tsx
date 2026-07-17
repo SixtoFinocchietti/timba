@@ -336,8 +336,8 @@ export default function PartidaPool() {
         }
         return
       }
-      const dxM = e.changeX / tf.escala
-      const dyM = -e.changeY / tf.escala
+      const dxM = e.changeX / tf.sx
+      const dyM = -e.changeY / tf.sy
       const a = anguloRef.current
       setAngulo(a + (dxM * -Math.sin(a) + dyM * Math.cos(a)) * SENSIBILIDAD)
     })

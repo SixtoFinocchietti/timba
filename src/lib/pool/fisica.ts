@@ -139,7 +139,10 @@ export function clonarBolas(bolas: Bola[]): Bola[] {
 }
 
 function bolaNueva(n: number, x: number, y: number): Bola {
-  return { n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true, rot: 0 }
+  return {
+    n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0,
+    viva: true, quieta: true, rot: 0, dirX: 0, dirY: 1,
+  }
 }
 
 export function esLisa(n: number): boolean {
@@ -287,7 +290,13 @@ function integrarBola(b: Bola, dt: number): void {
 
   b.pos.x += b.vel.x * dt
   b.pos.y += b.vel.y * dt
-  b.rot += (hipot(b.vel.x, b.vel.y) * dt) / R
+  const vMagFinal = hipot(b.vel.x, b.vel.y)
+  b.rot += (vMagFinal * dt) / R
+  if (vMagFinal > 0.03) {
+    // dirección de rodadura para el render (el patrón avanza hacia acá)
+    b.dirX = b.vel.x / vMagFinal
+    b.dirY = b.vel.y / vMagFinal
+  }
 }
 
 // ─── Colisiones ──────────────────────────────────────────────────────────────
@@ -423,7 +432,9 @@ export function simularTiro(bolasIniciales: Bola[], tiro: Tiro, opts?: OpcionesS
     if (opts?.sinMuestras) return
     muestras.push({
       t,
-      bolas: bolas.filter(b => b.viva).map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot })),
+      bolas: bolas
+        .filter(b => b.viva)
+        .map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot, dirX: b.dirX, dirY: b.dirY })),
     })
   }
   muestrear()

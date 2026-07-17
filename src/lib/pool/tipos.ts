@@ -24,6 +24,10 @@ export interface Bola {
   viva: boolean // false = embocada
   quieta: boolean
   rot: number // ángulo de rodadura acumulado (rad), solo para animar el patrón
+  // última dirección de movimiento (unitaria, coords de mesa): define hacia
+  // dónde "avanza" el patrón al rodar; persiste al frenar
+  dirX: number
+  dirY: number
 }
 
 // Input completo de un tiro. Es lo ÚNICO que viaja por la red (más el snapshot
@@ -44,7 +48,7 @@ export type EventoFisica =
 // Una muestra de animación por frame de render (60 fps): posiciones de bolas vivas.
 export interface MuestraAnimacion {
   t: number
-  bolas: { n: number; x: number; y: number; rot: number }[]
+  bolas: { n: number; x: number; y: number; rot: number; dirX: number; dirY: number }[]
 }
 
 export interface SnapshotBola {

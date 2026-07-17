@@ -1,19 +1,25 @@
-// Mesa de Pool dibujada 100% en Skia (procedural, sin assets por ahora: cuando
-// esté el arte final de la mesa, el paño/marco se reemplaza por una Image y las
-// capas dinámicas quedan igual). Ver spec §13: las bolas son procedurales —
-// color pleno o franja (rayadas), circulito del número, sombreado esférico y
-// highlight FIJO arriba-izquierda (la luz no gira con la bola).
+// Mesa de Pool en Skia. El fondo es el ARTE del usuario
+// (assets/pool-assets/mesa.png: marco, bandas, troneras y línea de cabecera
+// ya dibujados); encima van las capas dinámicas. La geometría física se mapea
+// al paño del dibujo vía transform.ts.
 //
-// Este archivo importa Skia, así que en web SOLO debe cargarse vía
-// MesaPoolLazy (después de LoadSkiaWeb). No importar directo desde pantallas.
+// Bolas procedurales CON RODADURA (spec §13): el patrón (franja, número, punto
+// de la blanca) orbita con la fase de rodadura que calcula el motor (rot) en
+// la dirección del movimiento — avanza por la cara, se achica hacia el borde,
+// desaparece adelante y reaparece atrás — mientras el sombreado esférico y el
+// brillo especular quedan FIJOS (la luz no gira con la bola): ese contraste es
+// lo que vende la esfera en 2D.
+//
+// Este archivo importa Skia: en web SOLO debe cargarse vía MesaPoolLazy
+// (después de LoadSkiaWeb). No importar directo desde pantallas.
 
 import {
-  Canvas, Circle, DashPathEffect, Group, Line, RadialGradient, Rect, RoundedRect,
-  Skia, vec,
+  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line,
+  RadialGradient, Rect, Skia, useImage, vec,
 } from '@shopify/react-native-skia'
-import { PARAMETROS, TRONERAS, CABECERA_Y, PIE } from '@/lib/pool/fisica'
+import { PARAMETROS } from '@/lib/pool/fisica'
 import { calcularGuia } from '@/lib/pool/guia'
-import { ANCHO_BANDA, ANCHO_MARCO, crearTransform } from '@/lib/pool/transform'
+import { ASSET_MESA, crearTransform } from '@/lib/pool/transform'
 import { Bola, MuestraAnimacion } from '@/lib/pool/tipos'
 
 export interface MesaPoolProps {
@@ -36,21 +42,62 @@ const COLORES_BOLA: Record<number, string> = {
 
 const MARFIL = '#F2EFE8'
 
-function BolaDibujada({ cx, cy, r, n }: { cx: number; cy: number; r: number; n: number }) {
+interface BolaDibujadaProps {
+  cx: number
+  cy: number
+  r: number
+  n: number
+  rot: number
+  dirPx: number // dirección de avance en PANTALLA (y hacia abajo)
+  dirPy: number
+}
+
+function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy }: BolaDibujadaProps) {
   const rayada = n >= 9
   const color = n === 0 ? MARFIL : COLORES_BOLA[n <= 8 ? n : n - 8]
+
+  // fase de rodadura: el patrón orbita la esfera; visible si cos > 0
+  const fase = rot % (2 * Math.PI)
+  const s = Math.sin(fase)
+  const co = Math.cos(fase)
+  const offsetLocal = -s * 0.55 * r // avance del patrón: -y local = dirección de movimiento
+  const escala = 0.55 + 0.45 * Math.abs(co)
+  const patronVisible = co > 0.05
+  // marco local: -y local apunta hacia la dirección de avance en pantalla
+  const angDir = Math.atan2(dirPy, dirPx) + Math.PI / 2
+
   const clip = Skia.Path.Make()
   clip.addCircle(cx, cy, r)
+
   return (
     <Group>
+      {/* sombra proyectada (fija) */}
       <Circle cx={cx + r * 0.2} cy={cy + r * 0.32} r={r} color="rgba(0,0,0,0.30)" />
+      {/* base */}
       <Circle cx={cx} cy={cy} r={r} color={rayada ? MARFIL : color} />
-      {rayada && (
-        <Group clip={clip}>
-          <Rect x={cx - r} y={cy - r * 0.52} width={2 * r} height={r * 1.04} color={color} />
-        </Group>
-      )}
-      {n !== 0 && <Circle cx={cx} cy={cy} r={r * 0.42} color={MARFIL} />}
+
+      {/* patrón que RUEDA (rotado hacia la dirección de avance) */}
+      <Group origin={vec(cx, cy)} transform={[{ rotate: angDir }]}>
+        {rayada && (
+          <Group clip={clip}>
+            <Rect
+              x={cx - r}
+              y={cy + offsetLocal - (r * 1.04 * (0.35 + 0.65 * Math.abs(co))) / 2}
+              width={2 * r}
+              height={r * 1.04 * (0.35 + 0.65 * Math.abs(co))}
+              color={color}
+            />
+          </Group>
+        )}
+        {patronVisible && n !== 0 && (
+          <Circle cx={cx} cy={cy + offsetLocal} r={r * 0.42 * escala} color={MARFIL} />
+        )}
+        {patronVisible && n === 0 && (
+          <Circle cx={cx} cy={cy + offsetLocal} r={r * 0.14 * escala} color="#C93430" />
+        )}
+      </Group>
+
+      {/* sombreado esférico + brillo: FIJOS (la luz no gira con la bola) */}
       <Circle cx={cx} cy={cy} r={r}>
         <RadialGradient
           c={vec(cx - r * 0.35, cy - r * 0.4)}
@@ -68,20 +115,15 @@ export default function MesaPool({
   anchoPx, bolas, muestra, angulo, fuerzaPreview, mostrarGuia, bolaEnMano,
 }: MesaPoolProps) {
   const tf = crearTransform(anchoPx)
-  const e = tf.escala
-  const rPx = R * e
-
-  // superficie jugable en px
-  const supIzq = tf.aPantalla({ x: -PARAMETROS.anchoMesa / 2, y: PARAMETROS.altoMesa / 2 })
-  const supAncho = PARAMETROS.anchoMesa * e
-  const supAlto = PARAMETROS.altoMesa * e
-  const bandaPx = ANCHO_BANDA * e
-  const marcoPx = ANCHO_MARCO * e
+  const rPx = tf.radioBolaPx
+  const fondo = useImage(require('../../../assets/pool-assets/mesa.png'))
 
   // qué bolas dibujar: la animación manda, si no el estado quieto
   const dibujables = muestra
     ? muestra.bolas
-    : bolas.filter(b => b.viva).map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot }))
+    : bolas
+        .filter(b => b.viva)
+        .map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot, dirX: b.dirX, dirY: b.dirY }))
 
   const blanca = bolas.find(b => b.n === 0 && b.viva)
   const guia = !muestra && mostrarGuia && blanca ? calcularGuia(bolas, angulo) : null
@@ -93,49 +135,23 @@ export default function MesaPool({
   const gap = 2.4 * R + fuerzaPreview * 0.34
   const largoTaco = 0.86
 
-  const cabeceraY = tf.aPantalla({ x: 0, y: CABECERA_Y }).y
-  const pie = tf.aPantalla(PIE)
-
   return (
     <Canvas style={{ width: tf.anchoPx, height: tf.altoPx }}>
-      {/* marco de madera */}
-      <RoundedRect x={0} y={0} width={tf.anchoPx} height={tf.altoPx} r={marcoPx * 1.2} color="#4A2E15" />
-      <RoundedRect
-        x={marcoPx * 0.25} y={marcoPx * 0.25}
-        width={tf.anchoPx - marcoPx * 0.5} height={tf.altoPx - marcoPx * 0.5}
-        r={marcoPx} color="#5D3A1C"
-      />
-      {/* banda + paño con viñeta de lámpara */}
-      <Rect
-        x={supIzq.x - bandaPx} y={supIzq.y - bandaPx}
-        width={supAncho + 2 * bandaPx} height={supAlto + 2 * bandaPx}
-        color="#0E4634"
-      />
-      <Rect x={supIzq.x} y={supIzq.y} width={supAncho} height={supAlto}>
-        <RadialGradient
-          c={vec(tf.anchoPx / 2, tf.altoPx / 2)}
-          r={supAlto * 0.62}
-          colors={['#1B6B50', '#155843', '#0F4636']}
-          positions={[0, 0.6, 1]}
-        />
-      </Rect>
-      {/* línea de cabecera y punto del pie */}
-      <Line
-        p1={vec(supIzq.x + 4, cabeceraY)} p2={vec(supIzq.x + supAncho - 4, cabeceraY)}
-        color="rgba(255,255,255,0.16)" strokeWidth={1.5}
-      />
-      <Circle cx={pie.x} cy={pie.y} r={3} color="rgba(255,255,255,0.20)" />
-
-      {/* troneras */}
-      {TRONERAS.map(t => {
-        const p = tf.aPantalla(t.centro)
-        return (
-          <Group key={t.id}>
-            <Circle cx={p.x} cy={p.y} r={t.boca * e * 0.95} color="#241505" />
-            <Circle cx={p.x} cy={p.y} r={t.boca * e * 0.78} color="#0A0A0A" />
-          </Group>
-        )
-      })}
+      {/* fondo: el arte de la mesa (fallback procedural mientras carga) */}
+      {fondo ? (
+        <SkiaImage image={fondo} x={0} y={0} width={tf.anchoPx} height={tf.altoPx} fit="fill" />
+      ) : (
+        <Group>
+          <Rect x={0} y={0} width={tf.anchoPx} height={tf.altoPx} color="#3A2412" />
+          <Rect
+            x={tf.anchoPx * ASSET_MESA.fx0}
+            y={tf.altoPx * ASSET_MESA.fy0}
+            width={tf.anchoPx * (ASSET_MESA.fx1 - ASSET_MESA.fx0)}
+            height={tf.altoPx * (ASSET_MESA.fy1 - ASSET_MESA.fy0)}
+            color="#155843"
+          />
+        </Group>
+      )}
 
       {/* guía de tiro */}
       {guia && (
@@ -147,7 +163,6 @@ export default function MesaPool({
           >
             <DashPathEffect intervals={[9, 7]} />
           </Line>
-          {/* ghost ball en el punto de contacto */}
           <Circle
             cx={tf.aPantalla(guia.impacto).x} cy={tf.aPantalla(guia.impacto).y} r={rPx}
             style="stroke" strokeWidth={1.6} color="rgba(255,255,255,0.75)"
@@ -178,7 +193,18 @@ export default function MesaPool({
       {/* bolas */}
       {dibujables.map(b => {
         const p = tf.aPantalla({ x: b.x, y: b.y })
-        return <BolaDibujada key={b.n} cx={p.x} cy={p.y} r={rPx} n={b.n} />
+        return (
+          <BolaDibujada
+            key={b.n}
+            cx={p.x}
+            cy={p.y}
+            r={rPx}
+            n={b.n}
+            rot={b.rot}
+            dirPx={b.dirX}
+            dirPy={-b.dirY}
+          />
+        )
       })}
 
       {/* glow de bola en mano */}
@@ -212,7 +238,7 @@ export default function MesaPool({
               tf.aPantalla({ x: blanca.pos.x - dirX * (gap + 0.055), y: blanca.pos.y - dirY * (gap + 0.055) }).x,
               tf.aPantalla({ x: blanca.pos.x - dirX * (gap + 0.055), y: blanca.pos.y - dirY * (gap + 0.055) }).y,
             )}
-            color="#E8E2D4" strokeWidth={Math.max(4, rPx * 0.55)} strokeCap="round"
+            color="#E8E4DC" strokeWidth={Math.max(4, rPx * 0.55)} strokeCap="round"
           />
         </Group>
       )}

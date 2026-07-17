@@ -1,39 +1,51 @@
 // Conversión entre coordenadas de mesa (metros, ver tipos.ts) y píxeles de
 // pantalla. Puro: lo usan tanto el canvas (dibujo) como los gestos (input).
 //
-// La mesa se dibuja con banda + marco de madera alrededor de la superficie
-// jugable; el origen de mesa (0,0) queda en el centro del canvas y el eje y
-// de mesa apunta HACIA ARRIBA (pantalla: hacia abajo), por eso se invierte.
+// El fondo es el ARTE de assets/pool-assets/mesa.png: el canvas adopta el
+// aspecto de la imagen y la superficie jugable de la física se mapea al rect
+// del paño dibujado (fracciones calibradas a ojo sobre el asset). El paño del
+// dibujo es ~1.70:1 y la física usa el 2:1 exacto de una mesa real, así que
+// las escalas x/y difieren ~15% — imperceptible, y la física no se toca.
+// (Si el arte se re-exporta con el paño exactamente 2:1, esto queda 1:1.)
 
 import { PARAMETROS } from './fisica'
 import { Vec2 } from './tipos'
 
-export const ANCHO_BANDA = 0.05 // banda de goma visible (unidades de mesa)
-export const ANCHO_MARCO = 0.07 // marco de madera
+// Calibración del asset mesa.png (1234×1852): bordes del paño jugable
+// (la "nariz" de las bandas) como fracción del ancho/alto de la imagen.
+export const ASSET_MESA = {
+  aspecto: 1852 / 1234, // alto / ancho
+  fx0: 0.159,
+  fx1: 0.843,
+  fy0: 0.117,
+  fy1: 0.891,
+} as const
 
-const EXTRA = 2 * (ANCHO_BANDA + ANCHO_MARCO)
-export const ANCHO_TOTAL_MESA = PARAMETROS.anchoMesa + EXTRA
-export const ALTO_TOTAL_MESA = PARAMETROS.altoMesa + EXTRA
-export const RELACION_ASPECTO = ALTO_TOTAL_MESA / ANCHO_TOTAL_MESA // ≈ 1.82
+export const RELACION_ASPECTO = ASSET_MESA.aspecto // alto/ancho del canvas
 
 export interface TransformMesa {
   anchoPx: number
   altoPx: number
-  escala: number // px por unidad de mesa
+  sx: number // px por unidad de mesa en x
+  sy: number // px por unidad de mesa en y
+  radioBolaPx: number // media geométrica: reparte la anisotropía
   aPantalla: (v: Vec2) => { x: number; y: number }
   aMesa: (px: number, py: number) => Vec2
 }
 
 export function crearTransform(anchoPx: number): TransformMesa {
-  const escala = anchoPx / ANCHO_TOTAL_MESA
-  const altoPx = anchoPx * RELACION_ASPECTO
-  const cx = anchoPx / 2
-  const cy = altoPx / 2
+  const altoPx = anchoPx * ASSET_MESA.aspecto
+  const cx = anchoPx * ((ASSET_MESA.fx0 + ASSET_MESA.fx1) / 2)
+  const cy = altoPx * ((ASSET_MESA.fy0 + ASSET_MESA.fy1) / 2)
+  const sx = (anchoPx * (ASSET_MESA.fx1 - ASSET_MESA.fx0)) / PARAMETROS.anchoMesa
+  const sy = (altoPx * (ASSET_MESA.fy1 - ASSET_MESA.fy0)) / PARAMETROS.altoMesa
   return {
     anchoPx,
     altoPx,
-    escala,
-    aPantalla: v => ({ x: cx + v.x * escala, y: cy - v.y * escala }),
-    aMesa: (px, py) => ({ x: (px - cx) / escala, y: (cy - py) / escala }),
+    sx,
+    sy,
+    radioBolaPx: PARAMETROS.radioBola * Math.sqrt(sx * sy),
+    aPantalla: v => ({ x: cx + v.x * sx, y: cy - v.y * sy }),
+    aMesa: (px, py) => ({ x: (px - cx) / sx, y: (cy - py) / sy }),
   }
 }
