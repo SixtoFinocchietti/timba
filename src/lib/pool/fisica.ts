@@ -57,10 +57,12 @@ export const PARAMETROS = {
   umbralDesliz: 0.02, // m/s de velocidad de contacto para pasar a rodadura
   tMax: 20, // failsafe de simulación (s)
 
-  // Troneras: capturas generosas para mobile (spec §5) — radio ~2.1× bola
-  radioCapturaEsquina: 0.062,
+  // Troneras: capturas generosas para mobile (spec §5) — radio ~2.1× bola.
+  // La boca de esquina es amplia a propósito: acepta el cono de entrada
+  // realista (~90°), no solo la diagonal exacta.
+  radioCapturaEsquina: 0.068,
   radioCapturaLateral: 0.055,
-  radioBocaEsquina: 0.08, // zona sin pared alrededor del centro de tronera
+  radioBocaEsquina: 0.105, // zona sin pared alrededor del centro de tronera
   radioBocaLateral: 0.068,
   radioPosteCeja: 0.006,
 
@@ -81,7 +83,7 @@ export interface Tronera {
 }
 
 function troneras(): Tronera[] {
-  const dE = 0.02 // offset diagonal del centro de las esquinas, hacia afuera
+  const dE = 0.01 // offset diagonal del centro de las esquinas, hacia afuera
   const dL = 0.028 // offset lateral
   const e = PARAMETROS.radioCapturaEsquina
   const l = PARAMETROS.radioCapturaLateral
@@ -103,7 +105,7 @@ export const TRONERAS: readonly Tronera[] = troneras()
 // Una bola que entra mal a la boca choca el poste y puede salir escupida.
 function postes(): Vec2[] {
   const p: Vec2[] = []
-  const cortaE = 0.07 // dónde termina la pared junto a una esquina
+  const cortaE = 0.095 // dónde termina la pared junto a una esquina
   const cortaL = PARAMETROS.radioBocaLateral
   // esquinas: un poste en la pared vertical y otro en la horizontal
   for (const sx of [-1, 1]) {
@@ -148,8 +150,9 @@ export function esRayada(n: number): boolean {
   return n >= 9 && n <= 15
 }
 
-// LCG determinista (mulberry32) para mezclar el rack con seed compartida online.
-function crearRng(seed: number): () => number {
+// LCG determinista (mulberry32): mezcla el rack con seed compartida online y
+// alimenta el ruido humano del bot (bot.ts) — reproducible en tests.
+export function crearRng(seed: number): () => number {
   let s = seed | 0
   return () => {
     s = (s + 0x6d2b79f5) | 0
@@ -226,10 +229,13 @@ export function crearRack(seed: number): Bola[] {
 // (el punto de rodadura natural real); b > 0.4 = topspin extra, b < 0 = backspin.
 function aplicarTiro(bolas: Bola[], tiro: Tiro): void {
   const blanca = bolas.find(b => b.n === 0)
-  if (!blanca || !blanca.viva) return
+  if (!blanca) return
   if (tiro.posBlanca) {
+    // bola en mano: colocarla revive a la blanca si venía de un scratch
     blanca.pos = { x: tiro.posBlanca.x, y: tiro.posBlanca.y }
+    blanca.viva = true
   }
+  if (!blanca.viva) return
   const V = Math.max(0.05, Math.min(1, tiro.fuerza)) * PARAMETROS.velMaxTaco
   const dx = Math.cos(tiro.angulo)
   const dy = Math.sin(tiro.angulo)

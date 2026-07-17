@@ -135,13 +135,13 @@ test('tronera: apuntada al centro cae; apuntada al lado rebota (ceja/pared)', ()
   assert.ok(r1.eventos.some(e => e.tipo === 'tronera' && e.bola === 0), 'la bola cayó en la tronera')
   assert.equal(finalDe(r1.bolas, 0).viva, false)
 
-  // a la pared derecha, lejos de la boca: rebota y sigue viva
+  // a la pared derecha, lejos de la boca: rebota en vez de caer ahí
   const objetivo = { x: PARAMETROS.anchoMesa / 2, y: 0.7 }
   const origen = { x: 0.1, y: 0.55 }
   const alLado = Math.atan2(objetivo.y - origen.y, objetivo.x - origen.x)
-  const r2 = simularTiro([bola(0, origen.x, origen.y)], tiro({ angulo: alLado, fuerza: 0.35 }))
-  assert.equal(finalDe(r2.bolas, 0).viva, true)
+  const r2 = simularTiro([bola(0, origen.x, origen.y)], tiro({ angulo: alLado, fuerza: 0.22 }))
   assert.ok(r2.eventos.some(e => e.tipo === 'banda'), 'rebotó en la banda')
+  assert.equal(finalDe(r2.bolas, 0).viva, true, 'siguió en la mesa')
 })
 
 test('break completo: termina, nada escapa de la mesa, velocidades acotadas', () => {

@@ -1,12 +1,13 @@
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native'
+import { useState } from 'react'
+import { View, Text, StyleSheet, TouchableOpacity, Modal, Pressable } from 'react-native'
 import { router } from 'expo-router'
 import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
 
-// Menú del Pool (spec §2.1). Fase 2: práctica libre jugable; tutorial, bot y
-// amigos llegan en las fases 3-5 — se muestran como próximamente para que el
-// menú ya comunique el alcance del juego.
+// Menú del Pool (spec §2.1). Fases 2-3: práctica libre y 8-ball vs Bot;
+// tutorial y online llegan en las fases 4-5 — se muestran como próximamente
+// para que el menú ya comunique el alcance del juego.
 
 const MODOS: {
   id: string
@@ -15,17 +16,30 @@ const MODOS: {
   disponible: boolean
 }[] = [
   { id: 'practica', nombre: 'Práctica libre', descripcion: 'Mesa sola, sin reglas: tirá y probá efectos', disponible: true },
+  { id: 'bot', nombre: 'Jugar vs Bot', descripcion: '8-Ball con reglas · Fácil, Normal o Difícil', disponible: true },
   { id: 'tutorial', nombre: 'Tutorial', descripcion: 'Aprendé controles, reglas y efectos', disponible: false },
-  { id: 'bot', nombre: 'Jugar vs Bot', descripcion: 'Fácil, Normal o Difícil', disponible: false },
   { id: 'amigo', nombre: 'Con un amigo', descripcion: 'Partida online con invitación', disponible: false },
+]
+
+const DIFICULTADES = [
+  { id: 'facil', nombre: 'Fácil', descripcion: 'Solo ve tiros directos y le pega de más' },
+  { id: 'normal', nombre: 'Normal', descripcion: 'Planifica un tiro adelante y usa efecto' },
+  { id: 'dificil', nombre: 'Difícil', descripcion: 'Planifica la limpieza y juega seguridades' },
 ]
 
 export default function PoolMenu() {
   const c = useColores()
   const es = makeEstilos(c)
+  const [sheetBot, setSheetBot] = useState(false)
 
   function abrir(id: string) {
     if (id === 'practica') router.push('/juegos/partida-pool' as any)
+    if (id === 'bot') setSheetBot(true)
+  }
+
+  function jugarVsBot(dificultad: string) {
+    setSheetBot(false)
+    router.push({ pathname: '/juegos/partida-pool', params: { modo: 'bot', dificultad } } as any)
   }
 
   return (
@@ -68,6 +82,34 @@ export default function PoolMenu() {
           </TouchableOpacity>
         ))}
       </View>
+
+      {/* Bottom sheet: dificultad del Bot */}
+      <Modal visible={sheetBot} transparent animationType="slide" onRequestClose={() => setSheetBot(false)}>
+        <Pressable style={es.sheetOverlay} onPress={() => setSheetBot(false)} />
+        <View style={[es.sheet, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+          <View style={[es.sheetHandle, { backgroundColor: c.borde }]} />
+          <Text style={[es.sheetTitulo, { color: c.texto }]}>Jugar vs Bot</Text>
+          <Text style={[es.sheetSubtitulo, { color: c.textoSuave }]}>¿Qué tan bueno lo querés?</Text>
+
+          {DIFICULTADES.map(d => (
+            <TouchableOpacity
+              key={d.id}
+              style={[es.sheetOpcion, { backgroundColor: c.fondoInput, borderColor: c.borde }]}
+              onPress={() => jugarVsBot(d.id)}
+              activeOpacity={0.8}
+            >
+              <View style={[es.sheetIcono, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+                <AppIcon name="pool" size={22} color={c.primario} />
+              </View>
+              <View style={es.sheetOpcionTexto}>
+                <Text style={[es.sheetOpcionNombre, { color: c.texto }]}>{d.nombre}</Text>
+                <Text style={[es.sheetOpcionDesc, { color: c.textoSuave }]}>{d.descripcion}</Text>
+              </View>
+              <Text style={[es.chevron, { color: c.textoSuave }]}>›</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </Modal>
     </View>
   )
 }
@@ -94,5 +136,26 @@ function makeEstilos(c: ColoresTema) {
     chevron: { fontSize: 24, fontWeight: '700' },
     badge: { borderWidth: 1, borderRadius: 8, paddingHorizontal: 8, paddingVertical: 3 },
     badgeTexto: { fontSize: 11, fontWeight: '700' },
+    // Sheet (mismo patrón que juegos/index)
+    sheetOverlay: { flex: 1, backgroundColor: 'rgba(0,0,0,0.6)' },
+    sheet: {
+      borderTopLeftRadius: 24, borderTopRightRadius: 24,
+      borderWidth: 1, borderBottomWidth: 0,
+      padding: 10, paddingHorizontal: 20, paddingBottom: 36,
+    },
+    sheetHandle: { width: 40, height: 5, borderRadius: 3, alignSelf: 'center', marginBottom: 16 },
+    sheetTitulo: { fontSize: 20, fontWeight: '800', textAlign: 'center' },
+    sheetSubtitulo: { fontSize: 14, textAlign: 'center', marginTop: 4, marginBottom: 20 },
+    sheetOpcion: {
+      flexDirection: 'row', alignItems: 'center', gap: 14,
+      borderRadius: 16, padding: 16, borderWidth: 1, marginBottom: 12,
+    },
+    sheetIcono: {
+      width: 44, height: 44, borderRadius: 12, borderWidth: 1,
+      alignItems: 'center', justifyContent: 'center', flexShrink: 0,
+    },
+    sheetOpcionTexto: { flex: 1 },
+    sheetOpcionNombre: { fontSize: 16, fontWeight: '800' },
+    sheetOpcionDesc: { fontSize: 13, marginTop: 2 },
   })
 }
