@@ -15,6 +15,7 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
 import { View, Text, StyleSheet, TouchableOpacity } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
@@ -23,6 +24,8 @@ import { ColoresTema } from '@/lib/colores'
 import MesaPoolLazy from '@/components/pool/MesaPoolLazy'
 import ControlFuerza from '@/components/pool/ControlFuerza'
 import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
+import { useSonidoPool } from '@/lib/pool/sonido'
+import { haptica } from '@/lib/pool/haptica'
 import {
   CABECERA_Y, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
 } from '@/lib/pool/fisica'
@@ -112,7 +115,11 @@ export default function PartidaPool() {
   const [spinAbierto, setSpinAbierto] = useState(false)
   const [msg, setMsg] = useState<string | null>(null)
   const [anchoMesa, setAnchoMesa] = useState(0)
+  const [sonido, setSonido] = useState(true)
   const zonaRef = useRef<View>(null)
+  const sonidoRef = useRef(true)
+  sonidoRef.current = sonido
+  const sfx = useSonidoPool(sonido)
 
   const rafRef = useRef<number | null>(null)
   const botTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -146,6 +153,30 @@ export default function PartidaPool() {
     if (botTimer.current) clearTimeout(botTimer.current)
     if (msgTimer.current) clearTimeout(msgTimer.current)
   }, [])
+
+  useEffect(() => {
+    AsyncStorage.getItem('@timba:pool_sonido').then(v => { if (v === '0') setSonido(false) })
+  }, [])
+
+  function toggleSonido() {
+    setSonido(s => {
+      const nuevo = !s
+      AsyncStorage.setItem('@timba:pool_sonido', nuevo ? '1' : '0')
+      return nuevo
+    })
+  }
+
+  // feedback audible/háptico del resultado de un tiro (victoria/falta)
+  function feedback(resultado: { ganador: Jugador | null; faltas: Falta[] }) {
+    const yo = esOnline ? miJugador : HUMANO
+    if (resultado.ganador) {
+      if (resultado.ganador === yo) { sfx.simple('win'); if (sonidoRef.current) haptica.victoria() }
+      else if (sonidoRef.current) haptica.falta()
+    } else if (resultado.faltas.length > 0) {
+      sfx.simple('foul', 0.7)
+      if (sonidoRef.current) haptica.falta()
+    }
+  }
 
   // Fallback de medición: en web, un tab en segundo plano no dispara onLayout
   useEffect(() => {
@@ -303,6 +334,10 @@ export default function PartidaPool() {
 
   function animar(res: ResultadoSimulacion, alTerminar: () => void) {
     setAnimando(true)
+    // sonido agendado por los timestamps de los eventos + tacazo/vibración inicial
+    sfx.reproducirTiro(res)
+    if (sonidoRef.current) haptica.golpe()
+    const huboEmboque = res.eventos.some(e => e.tipo === 'tronera' && e.bola !== 0)
     const t0 = performance.now()
     const paso = () => {
       const tt = (performance.now() - t0) / 1000
@@ -313,6 +348,7 @@ export default function PartidaPool() {
       } else {
         setMuestra(null)
         setAnimando(false)
+        if (sonidoRef.current && huboEmboque) haptica.tronera()
         alTerminar()
       }
     }
@@ -359,6 +395,7 @@ export default function PartidaPool() {
     const previo = estadoRef.current
     if (!previo) return
     const { estado: e2, resultado } = resolverTiro(previo, res.eventos, res.snapshot)
+    feedback(resultado)
 
     if (resultado.rerack) {
       avisar('La 8 cayó en el break: se arma de nuevo')
@@ -399,6 +436,7 @@ export default function PartidaPool() {
     const f = filaRef.current
     if (!previo || !f) return
     let { estado: e2, resultado } = resolverTiro(previo, res.eventos, res.snapshot)
+    feedback(resultado)
 
     // simplificación v1: online el break inválido se juega como quedó
     if (resultado.breakIlegal) {
@@ -484,6 +522,7 @@ export default function PartidaPool() {
           setBolas(bolasDeSnapshot(f.estado_bolas))
           setEstado(f.estado_juego)
           const { resultado } = resolverTiro(previo, res.eventos, res.snapshot)
+          feedback(resultado)
           if (f.fase === 'terminada') {
             // el overlay muestra el final
           } else if ((anterior?.victorias_host ?? 0) !== f.victorias_host || (anterior?.victorias_invitado ?? 0) !== f.victorias_invitado) {
@@ -589,6 +628,22 @@ export default function PartidaPool() {
   function revancha() {
     rompe.current = rival(rompe.current)
     nuevaPartida(rompe.current)
+  }
+
+  // Integración Timba (spec §15): al terminar online, sugerir —no auto-resolver—
+  // una Timba con las opciones precargadas. El creador la resuelve después,
+  // como cualquier Timba (modelo de confianza). Solo online: apostar contra un
+  // bot no tiene sentido (anti-ludopatía, ver [[feedback-anti-ludopatia]]).
+  function crearTimbaResultado() {
+    const yo = usuario?.nombre || 'Vos'
+    router.replace({
+      pathname: '/timba/nueva',
+      params: {
+        tituloPreset: `Pool: ${yo} vs ${nombreRival}`,
+        opcionesPreset: `Gana ${yo},Gana ${nombreRival}`,
+        opcionesBloqueadas: 'true',
+      },
+    } as any)
   }
 
   // ── gestos sobre la mesa ──
@@ -794,17 +849,26 @@ export default function PartidaPool() {
 
       {/* barra inferior */}
       <View style={es.barra}>
-        <TouchableOpacity
-          style={[es.botonSpin, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
-          onPress={() => setSpinAbierto(true)}
-          activeOpacity={0.8}
-          disabled={!controlesActivos}
-        >
-          <View style={es.spinBola}>
-            <View style={[es.spinPunto, { transform: [{ translateX: spin.a * 9 }, { translateY: -spin.b * 9 }] }]} />
-          </View>
-          <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Efecto</Text>
-        </TouchableOpacity>
+        <View style={es.barraIzq}>
+          <TouchableOpacity
+            style={[es.botonSonido, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+            onPress={toggleSonido}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 18 }}>{sonido ? '🔊' : '🔇'}</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[es.botonSpin, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+            onPress={() => setSpinAbierto(true)}
+            activeOpacity={0.8}
+            disabled={!controlesActivos}
+          >
+            <View style={es.spinBola}>
+              <View style={[es.spinPunto, { transform: [{ translateX: spin.a * 9 }, { translateY: -spin.b * 9 }] }]} />
+            </View>
+            <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Efecto</Text>
+          </TouchableOpacity>
+        </View>
 
         {puedeReclamar ? (
           <TouchableOpacity
@@ -898,8 +962,11 @@ export default function PartidaPool() {
                   : ganeSerie ? 'Embocaste la 8.' : 'Se llevó la 8.'}
             </Text>
             <View style={es.finBotones}>
-              <TouchableOpacity style={[es.botonPri, { backgroundColor: c.primario }]} onPress={() => router.back()} activeOpacity={0.8}>
-                <Text style={[es.botonPriTexto, { color: c.fondo }]}>Salir</Text>
+              <TouchableOpacity style={[es.botonSec, { borderColor: c.borde }]} onPress={() => router.back()} activeOpacity={0.8}>
+                <Text style={[es.botonSecTexto, { color: c.textoSuave }]}>Salir</Text>
+              </TouchableOpacity>
+              <TouchableOpacity style={[es.botonPri, { backgroundColor: c.primario }]} onPress={crearTimbaResultado} activeOpacity={0.8}>
+                <Text style={[es.botonPriTexto, { color: c.fondo }]}>Crear Timba</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -946,6 +1013,11 @@ function makeEstilos(c: ColoresTema) {
     barra: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between',
       paddingHorizontal: 24, paddingBottom: 28, paddingTop: 4,
+    },
+    barraIzq: { flexDirection: 'row', alignItems: 'center', gap: 10 },
+    botonSonido: {
+      width: 44, height: 44, borderRadius: 12, borderWidth: 1,
+      alignItems: 'center', justifyContent: 'center',
     },
     botonSpin: {
       flexDirection: 'row', alignItems: 'center', gap: 8,

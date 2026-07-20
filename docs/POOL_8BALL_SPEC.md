@@ -1,7 +1,9 @@
 # Pool 8-Ball — Especificación de diseño y desarrollo
 
 > Propuesta elaborada como equipo: Game Designer + UX/UI + Arquitectura + Mobile Senior.
-> Estado: **decisiones v1 tomadas (ver Apéndice B)** · Julio 2026 · Fase 1 (motor) en desarrollo
+> Estado: **v1 COMPLETA** · Julio 2026 · fases 1-6 implementadas (motor, mesa+controles,
+> bot, tutorial, online, integración Timba + sonido + háptica). Pendiente de pulido:
+> taco del usuario como asset, números en bolas (fuente TTF), y tuning con juego real.
 
 ---
 
