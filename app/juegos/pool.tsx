@@ -20,7 +20,7 @@ const MODOS: {
   { id: 'tutorial', nombre: 'Tutorial', descripcion: 'Aprendé controles, reglas y efectos en 3 minutos', disponible: true },
   { id: 'practica', nombre: 'Práctica libre', descripcion: 'Mesa sola, sin reglas: tirá y probá efectos', disponible: true },
   { id: 'bot', nombre: 'Jugar vs Bot', descripcion: '8-Ball con reglas · Fácil, Normal o Difícil', disponible: true },
-  { id: 'amigo', nombre: 'Con un amigo', descripcion: 'Partida online con invitación', disponible: false },
+  { id: 'amigo', nombre: 'Con un amigo', descripcion: 'Partida online con invitación por chat', disponible: true },
 ]
 
 const DIFICULTADES = [
@@ -47,6 +47,7 @@ export default function PoolMenu() {
     if (id === 'tutorial') router.push('/juegos/tutorial-pool' as any)
     if (id === 'practica') router.push('/juegos/partida-pool' as any)
     if (id === 'bot') setSheetBot(true)
+    if (id === 'amigo') router.push('/juegos/pool-online' as any)
   }
 
   function jugarVsBot(dificultad: string) {

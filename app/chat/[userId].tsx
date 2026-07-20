@@ -36,7 +36,7 @@ type Reaccion = {
   emoji: string
 }
 
-type TipoMensaje = 'texto' | 'imagen' | 'gif' | 'invitacion_timba' | 'invitacion_poker' | 'invitacion_truco' | 'invitacion_blackjack'
+type TipoMensaje = 'texto' | 'imagen' | 'gif' | 'invitacion_timba' | 'invitacion_poker' | 'invitacion_truco' | 'invitacion_blackjack' | 'invitacion_pool'
 
 type EstadoBloqueo = 'ninguno' | 'bloqueaste' | 'te_bloqueo'
 
@@ -1304,7 +1304,7 @@ function BurbujaMensaje({ m, mio, hora, myId, seleccionado, modoSeleccion, onPre
                 padding: m.tipo === 'texto' ? 10 : 4,
               },
               miBurbuja,
-              (m.tipo === 'invitacion_timba' || m.tipo === 'invitacion_poker' || m.tipo === 'invitacion_truco' || m.tipo === 'invitacion_blackjack') && { padding: 10 },
+              (m.tipo === 'invitacion_timba' || m.tipo === 'invitacion_poker' || m.tipo === 'invitacion_truco' || m.tipo === 'invitacion_blackjack' || m.tipo === 'invitacion_pool') && { padding: 10 },
             ]}
           >
             {m.tipo === 'texto' && (
@@ -1430,6 +1430,46 @@ function BurbujaMensaje({ m, mio, hora, myId, seleccionado, modoSeleccion, onPre
                           amigo: cfg.hostNombre || 'Amigo',
                           amigoId: cfg.hostId || m.emisor_id,
                           fichas: String(cfg.fichas),
+                          modo_sala: 'invitado',
+                        },
+                      } as any)}
+                      activeOpacity={0.8}
+                    >
+                      <Text style={{ color: c.fondo, fontSize: 13, fontWeight: '700' }}>Unirse</Text>
+                    </TouchableOpacity>
+                  )}
+                </View>
+              )
+            })()}
+
+            {m.tipo === 'invitacion_pool' && (() => {
+              let cfg = { serie: 1, timer: 45, hostId: '', hostNombre: '' }
+              try { Object.assign(cfg, JSON.parse(m.contenido ?? '{}')) } catch {}
+              const resumen = `${cfg.serie === 3 ? 'Mejor de 3' : 'Partida suelta'} · ${cfg.timer === 0 ? 'Sin límite' : `${cfg.timer}s por tiro`}`
+              return (
+                <View style={{ flexDirection: 'row', alignItems: 'center', gap: 10, width: 240 }}>
+                  <AppIcon name="pool" size={26} color={mio ? c.fondoCard : c.primario} />
+                  <View style={{ flex: 1 }}>
+                    <Text style={{ color: mio ? c.fondo : c.texto, fontWeight: '800', fontSize: 14 }}>
+                      Pool · 8-Ball
+                    </Text>
+                    <Text style={{ color: mio ? c.primarioSuave : c.textoSuave, fontSize: 12 }} numberOfLines={1}>
+                      {resumen}
+                    </Text>
+                  </View>
+                  {!mio && (
+                    <TouchableOpacity
+                      style={{
+                        backgroundColor: c.primario,
+                        paddingHorizontal: 10, paddingVertical: 6, borderRadius: 10,
+                      }}
+                      onPress={() => router.push({
+                        pathname: '/juegos/sala-pool',
+                        params: {
+                          amigo: cfg.hostNombre || 'Amigo',
+                          amigoId: cfg.hostId || m.emisor_id,
+                          serie: String(cfg.serie),
+                          timer: String(cfg.timer),
                           modo_sala: 'invitado',
                         },
                       } as any)}
