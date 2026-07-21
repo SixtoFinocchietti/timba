@@ -374,7 +374,7 @@ privilegiada.
 | Elección | La bola "más cerca de una tronera" (no la más probable) | La de mejor probabilidad | Mejor probabilidad **× valor posicional** |
 | Planificación | Ninguna: cada tiro es una isla | 1 tiro adelante (posición de la blanca) | 2-3 adelante: elige el *orden* de limpieza |
 | Spin | Nunca | Follow/draw básicos | Completo, incluye english para salidas de banda |
-| σ ángulo | ±3.5° | ±0.7° (escala con dificultad del tiro) | ±0.17° |
+| σ ángulo | ±3.5° | ±0.5° (escala con dificultad del tiro) | ±0.09° |
 | Fuerza | Aleatoria con **sesgo a pegarle de más** (típico principiante) | Correcta; a veces corto en tiros largos | Dosificada al plan |
 | Seguridad | No existe el concepto | Si mejor prob < 35%: tiro suave defensivo | Si mejor prob < 45%: **snooker deliberado** (esconde la blanca) |
 | Errores de lectura | 10% le pega a bola equivocada → faltas reales; puede elegir mal el grupo en mesa abierta | Tras 2+ emboques seguidos, exceso de confianza (σ +20%) | En la bola 8 o tiro de partido, **presión**: σ +30% |

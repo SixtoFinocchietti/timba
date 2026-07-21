@@ -21,6 +21,9 @@ const MODOS: {
   { id: 'practica', nombre: 'Práctica libre', descripcion: 'Mesa sola, sin reglas: tirá y probá efectos', disponible: true },
   { id: 'bot', nombre: 'Jugar vs Bot', descripcion: '8-Ball con reglas · Fácil, Normal o Difícil', disponible: true },
   { id: 'amigo', nombre: 'Con un amigo', descripcion: 'Partida online con invitación por chat', disponible: true },
+  // TEMPORAL (tuning jul 2026): sacar junto con app/juegos/debug-pool.tsx
+  // cuando quede confirmada la geometría de troneras/postes en dispositivo real.
+  { id: 'debug', nombre: '🐞 Debug mesa (temporal)', descripcion: 'Ver bandas y troneras invisibles', disponible: true },
 ]
 
 const DIFICULTADES = [
@@ -48,6 +51,7 @@ export default function PoolMenu() {
     if (id === 'practica') router.push('/juegos/partida-pool' as any)
     if (id === 'bot') setSheetBot(true)
     if (id === 'amigo') router.push('/juegos/pool-online' as any)
+    if (id === 'debug') router.push('/juegos/debug-pool' as any)
   }
 
   function jugarVsBot(dificultad: string) {

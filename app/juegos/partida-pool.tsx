@@ -37,11 +37,10 @@ import {
   EstadoJuego, Falta, Jugador, aplicarEleccionRebreak, crearEstadoInicial,
   esDelGrupo, resolverTimeout, resolverTiro, rival,
 } from '@/lib/pool/reglas'
-import { crearTransform, RELACION_ASPECTO } from '@/lib/pool/transform'
+import { crearTransform, RELACION_ASPECTO, SENSIBILIDAD_APUNTADO } from '@/lib/pool/transform'
 import { Bola, MuestraAnimacion, ResultadoSimulacion, Tiro } from '@/lib/pool/tipos'
 
 const AJUSTE_FINO = (0.25 * Math.PI) / 180
-const SENSIBILIDAD = 2.2 // rad por metro de arrastre tangencial
 const GRACIA_RECLAMO_MS = 90_000 // inactividad del rival para reclamar la victoria
 
 const HUMANO: Jugador = 'A' // en bot: humano=A, bot=B; en online: host=A
@@ -675,7 +674,7 @@ export default function PartidaPool() {
       const dxM = e.changeX / tf.sx
       const dyM = -e.changeY / tf.sy
       const a = anguloRef.current
-      setAngulo(a + (dxM * -Math.sin(a) + dyM * Math.cos(a)) * SENSIBILIDAD)
+      setAngulo(a + (dxM * -Math.sin(a) + dyM * Math.cos(a)) * SENSIBILIDAD_APUNTADO)
     })
 
   // ── datos del HUD ──
@@ -814,6 +813,7 @@ export default function PartidaPool() {
                   fuerzaPreview={fuerza}
                   mostrarGuia={!animando && turnoMio}
                   bolaEnMano={bolaEnMano}
+                  longitudGuiaObjetivo={esBot && dificultad === 'facil' ? 40 : 6}
                 />
               </View>
             </GestureDetector>

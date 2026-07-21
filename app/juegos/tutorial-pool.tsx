@@ -15,11 +15,10 @@ import ControlFuerza from '@/components/pool/ControlFuerza'
 import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
 import { PARAMETROS, simularTiro } from '@/lib/pool/fisica'
 import { CLAVE_PROGRESO, LECCIONES, LeccionJugable } from '@/lib/pool/tutorial'
-import { crearTransform, RELACION_ASPECTO } from '@/lib/pool/transform'
+import { crearTransform, RELACION_ASPECTO, SENSIBILIDAD_APUNTADO } from '@/lib/pool/transform'
 import { Bola, MuestraAnimacion } from '@/lib/pool/tipos'
 
 const AJUSTE_FINO = (0.25 * Math.PI) / 180
-const SENSIBILIDAD = 2.2
 
 // ángulo inicial: apuntando a la primera bola objetivo del setup
 function anguloInicial(bolas: Bola[]): number {
@@ -201,7 +200,7 @@ export default function TutorialPool() {
       const dxM = e.changeX / tf.sx
       const dyM = -e.changeY / tf.sy
       const a = anguloRef.current
-      setAngulo(a + (dxM * -Math.sin(a) + dyM * Math.cos(a)) * SENSIBILIDAD)
+      setAngulo(a + (dxM * -Math.sin(a) + dyM * Math.cos(a)) * SENSIBILIDAD_APUNTADO)
     })
 
   const pregunta = leccion.tipo === 'quiz' ? leccion.preguntas[pregIdx] : null

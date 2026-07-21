@@ -38,8 +38,8 @@ export const PARAMETROS = {
 
   // Fricciones. La rodadura real (~0.01) daría tiros eternos en pantalla:
   // se usa un valor mayor para partidas ágiles. Tunear con la UI delante.
-  muDesliz: 0.2,
-  muRodadura: 0.06,
+  muDesliz: 0.45,
+  muRodadura: 0.28,
   decaimientoWz: 0.6, // 1/s, el english se disipa exponencialmente
 
   restBola: 0.94,
@@ -141,7 +141,13 @@ function postes(): Vec2[] {
   return p
 }
 
-const POSTES: readonly Vec2[] = postes()
+// Exportado para la pantalla de debug (app/juegos/debug-pool.tsx) — visualiza
+// esta geometría invisible sobre la mesa real para diagnosticar de un vistazo.
+export const POSTES: readonly Vec2[] = postes()
+export const RADIO_COLISION_POSTE = R + PARAMETROS.radioPosteCeja
+export function limitesJuego() {
+  return { lx: MX - R, ly: MY - R }
+}
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
 
@@ -283,13 +289,21 @@ function integrarBola(b: Bola, dt: number): void {
   const uMag = hipot(ux, uy)
 
   if (uMag > P.umbralDesliz) {
-    // sliding: fricción cinética opuesta a u, sobre v y sobre ω
+    // sliding: fricción cinética opuesta a u, sobre v y sobre ω. La reducción
+    // de |u| por paso es (dv + R·dw) = 3.5·μ·g·dt (resultado clásico de
+    // billar). Si esa reducción excede el deslizamiento ACTUAL, un paso de
+    // tamaño fijo lo pasa de largo e invierte el signo de u — la corrección
+    // vuelve a aplicarse en sentido contrario el paso siguiente y así para
+    // siempre: la bola nunca se duerme (bug real, ver commit).
+    // Se satura la reducción a como mucho uMag para converger siempre a 0.
     const iux = ux / uMag
     const iuy = uy / uMag
-    const dv = P.muDesliz * P.g * dt
+    const reduccionMax = 3.5 * P.muDesliz * P.g * dt
+    const reduccion = Math.min(uMag, reduccionMax)
+    const dv = reduccion / 3.5
+    const dw = (2.5 * reduccion) / (3.5 * R)
     b.vel.x -= dv * iux
     b.vel.y -= dv * iuy
-    const dw = (2.5 * P.muDesliz * P.g * dt) / R
     b.wx -= dw * iuy
     b.wy += dw * iux
   } else {

@@ -14,10 +14,10 @@
 // (después de LoadSkiaWeb). No importar directo desde pantallas.
 
 import {
-  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line,
+  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval,
   RadialGradient, Rect, Skia, Text as SkiaText, useFont, useImage, vec,
 } from '@shopify/react-native-skia'
-import { PARAMETROS } from '@/lib/pool/fisica'
+import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS, limitesJuego } from '@/lib/pool/fisica'
 import { calcularGuia } from '@/lib/pool/guia'
 import { ASSET_MESA, crearTransform } from '@/lib/pool/transform'
 import { Bola, MuestraAnimacion } from '@/lib/pool/tipos'
@@ -30,6 +30,13 @@ export interface MesaPoolProps {
   fuerzaPreview: number // 0..1: retroceso del taco mientras se carga el tiro
   mostrarGuia: boolean
   bolaEnMano: boolean
+  // debug temporal (spec de tuning jul 2026): dibuja la geometría invisible
+  // de colisión encima de la mesa real — verde las bandas jugables, rojo las
+  // troneras (captura sólida, boca punteada) y los postes de ceja
+  debug?: boolean
+  // ayuda de la dificultad Fácil (spec §10): línea de dirección de la bola
+  // objetivo mucho más larga, en radios de bola (default: guía normal)
+  longitudGuiaObjetivo?: number
 }
 
 const R = PARAMETROS.radioBola
@@ -98,14 +105,26 @@ function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaP
             />
           </Group>
         )}
-        {patronVisible && n !== 0 && (
-          <Circle cx={cx} cy={cy + offsetLocal} r={r * 0.42 * escala} color={MARFIL} />
-        )}
+        {patronVisible && n !== 0 && fuente && texto && (() => {
+          // parche blanco tipo "píldora": ancho según el texto (los números de
+          // 2 dígitos, 10-15, necesitan más que un círculo fijo) sin desbordar
+          const alturaParche = r * 0.66 * escala
+          const anchoParche = Math.max(alturaParche, anchoTexto + r * 0.26)
+          return (
+            <Oval
+              x={cx - anchoParche / 2}
+              y={cy + offsetLocal - alturaParche / 2}
+              width={anchoParche}
+              height={alturaParche}
+              color={MARFIL}
+            />
+          )
+        })()}
         {patronVisible && texto && fuente && (
           <Group clip={clip}>
             <SkiaText
               x={cx - anchoTexto / 2}
-              y={cy + offsetLocal + r * 0.16}
+              y={cy + offsetLocal + r * 0.1}
               text={texto}
               font={fuente}
               color={n === 8 ? MARFIL : '#161616'}
@@ -134,12 +153,13 @@ function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaP
 
 export default function MesaPool({
   anchoPx, bolas, muestra, angulo, fuerzaPreview, mostrarGuia, bolaEnMano,
+  longitudGuiaObjetivo = 6, debug = false,
 }: MesaPoolProps) {
   const tf = crearTransform(anchoPx)
   const rPx = tf.radioBolaPx
   const fondo = useImage(require('../../../assets/pool-assets/mesa.png'))
   const taco = useImage(require('../../../assets/pool-assets/palo_pool.png'))
-  const fuenteNumero = useFont(require('../../../assets/pool-assets/fonts/Merriweather-Bold.ttf'), Math.max(9, rPx * 0.85))
+  const fuenteNumero = useFont(require('../../../assets/pool-assets/fonts/Merriweather-Bold.ttf'), Math.max(8, rPx * 0.58))
 
   // qué bolas dibujar: la animación manda, si no el estado quieto
   const dibujables = muestra
@@ -176,6 +196,43 @@ export default function MesaPool({
         </Group>
       )}
 
+      {/* DEBUG temporal: geometría invisible de colisión sobre la mesa real */}
+      {debug && (() => {
+        const { lx, ly } = limitesJuego()
+        const esqSupIzq = tf.aPantalla({ x: -lx, y: ly })
+        const anchoRectPx = 2 * lx * tf.sx
+        const altoRectPx = 2 * ly * tf.sy
+        return (
+          <Group>
+            {/* verde: bandas jugables (donde rebota una bola normal) */}
+            <Rect
+              x={esqSupIzq.x} y={esqSupIzq.y} width={anchoRectPx} height={altoRectPx}
+              style="stroke" strokeWidth={2.5} color="#22C55E"
+            />
+            {/* rojo: troneras — sólido = captura, punteado = boca (sin pared) */}
+            {TRONERAS.map(t => {
+              const p = tf.aPantalla(t.centro)
+              const rCaptura = t.captura * ((tf.sx + tf.sy) / 2)
+              const rBoca = t.boca * ((tf.sx + tf.sy) / 2)
+              return (
+                <Group key={t.id}>
+                  <Circle cx={p.x} cy={p.y} r={rCaptura} color="rgba(220,38,38,0.45)" />
+                  <Circle cx={p.x} cy={p.y} r={rBoca} style="stroke" strokeWidth={2} color="rgba(220,38,38,0.9)">
+                    <DashPathEffect intervals={[6, 5]} />
+                  </Circle>
+                </Group>
+              )
+            })}
+            {/* rojo sólido: postes de ceja con su radio de colisión real */}
+            {POSTES.map((poste, i) => {
+              const p = tf.aPantalla(poste)
+              const rPoste = RADIO_COLISION_POSTE * ((tf.sx + tf.sy) / 2)
+              return <Circle key={i} cx={p.x} cy={p.y} r={rPoste} color="rgba(185,28,28,0.95)" />
+            })}
+          </Group>
+        )
+      })()}
+
       {/* guía de tiro */}
       {guia && (
         <Group>
@@ -194,8 +251,8 @@ export default function MesaPool({
             <Line
               p1={vec(tf.aPantalla(objetivo.pos).x, tf.aPantalla(objetivo.pos).y)}
               p2={vec(
-                tf.aPantalla({ x: objetivo.pos.x + guia.dirObjetivo.x * 6 * R, y: objetivo.pos.y + guia.dirObjetivo.y * 6 * R }).x,
-                tf.aPantalla({ x: objetivo.pos.x + guia.dirObjetivo.x * 6 * R, y: objetivo.pos.y + guia.dirObjetivo.y * 6 * R }).y,
+                tf.aPantalla({ x: objetivo.pos.x + guia.dirObjetivo.x * longitudGuiaObjetivo * R, y: objetivo.pos.y + guia.dirObjetivo.y * longitudGuiaObjetivo * R }).x,
+                tf.aPantalla({ x: objetivo.pos.x + guia.dirObjetivo.x * longitudGuiaObjetivo * R, y: objetivo.pos.y + guia.dirObjetivo.y * longitudGuiaObjetivo * R }).y,
               )}
               color="#DFC47A" strokeWidth={2.5}
             />

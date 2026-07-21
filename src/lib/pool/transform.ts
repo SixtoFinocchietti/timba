@@ -8,8 +8,16 @@
 // las escalas x/y difieren ~15% — imperceptible, y la física no se toca.
 // (Si el arte se re-exporta con el paño exactamente 2:1, esto queda 1:1.)
 
+import { Platform } from 'react-native'
 import { PARAMETROS } from './fisica'
 import { Vec2 } from './tipos'
+
+// Sensibilidad del apuntado por arrastre (rad por metro de arrastre
+// tangencial). Feedback real de usuario: en web (mouse) 2.2 quedaba alto;
+// en Android quedaba tan bajo que un giro de 180° necesitaba varios
+// arrastres con el dedo levantado — no hay un único valor que sirva para
+// ambos por cómo RNGH reporta los deltas en cada plataforma.
+export const SENSIBILIDAD_APUNTADO = Platform.select({ web: 1.7, default: 6.5 })!
 
 // Calibración del asset mesa.png (1234×1852): bordes del paño jugable
 // (la "nariz" de las bandas) como fracción del ancho/alto de la imagen.

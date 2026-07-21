@@ -53,13 +53,13 @@ export const PERFILES: Record<Dificultad, Perfil> = {
   // Nota de calibración: el error angular se amplifica ~d1/(2R) (≈10×) al
   // pasar por la ghost ball — sigmas chicos YA producen fallos humanos.
   normal: {
-    sigmaAngulo: 0.012, sigmaFuerza: 0.08, sesgoFuerza: 1.0,
+    sigmaAngulo: 0.0085, sigmaFuerza: 0.06, sesgoFuerza: 1.0,
     escalaConDificultad: true, usaSpin: true, planifica: 1,
     umbralSeguridad: 0.33, probErrorLectura: 0, eligePorCercania: false,
     presionOcho: 1.15, pensarMs: [1500, 3500],
   },
   dificil: {
-    sigmaAngulo: 0.003, sigmaFuerza: 0.035, sesgoFuerza: 1.0,
+    sigmaAngulo: 0.0016, sigmaFuerza: 0.022, sesgoFuerza: 1.0,
     escalaConDificultad: true, usaSpin: true, planifica: 2,
     umbralSeguridad: 0.45, probErrorLectura: 0, eligePorCercania: false,
     presionOcho: 1.3, pensarMs: [2500, 5000],
