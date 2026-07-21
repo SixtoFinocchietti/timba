@@ -144,6 +144,24 @@ test('tronera: apuntada al centro cae; apuntada al lado rebota (ceja/pared)', ()
   assert.equal(finalDe(r2.bolas, 0).viva, true, 'siguió en la mesa')
 })
 
+test('postes de esquina no interfieren con una bola pegada a la banda (bug real de juego)', () => {
+  // Una bola que viaja bien pegada a la banda derecha hacia la esquina
+  // sup-derecha rozaba un poste posicionado sobre la propia banda y
+  // rebotaba contra "algo invisible" en vez de entrar. Ver historial del
+  // commit para el diagnóstico completo.
+  const origen = { x: PARAMETROS.anchoMesa / 2 - R - 0.001, y: 0.5 }
+  const r = simularTiro([bola(0, origen.x, origen.y)], tiro({ angulo: Math.PI / 2, fuerza: 0.5 }))
+  assert.ok(r.eventos.some(e => e.tipo === 'tronera' && e.bola === 0), 'entró pegada a la banda, sin rebotes raros')
+})
+
+test('postes de esquina no interfieren con un tiro casi perfecto al bisector', () => {
+  const esquina = TRONERAS[1]
+  const origen = { x: 0.2, y: 0.3 }
+  const angulo = Math.atan2(esquina.centro.y - origen.y, esquina.centro.x - origen.x)
+  const r = simularTiro([bola(0, origen.x, origen.y)], tiro({ angulo, fuerza: 0.5 }))
+  assert.ok(r.eventos.some(e => e.tipo === 'tronera' && e.bola === 0), 'un tiro bien apuntado no debe rebotar contra un poste')
+})
+
 test('break completo: termina, nada escapa de la mesa, velocidades acotadas', () => {
   const bolas = crearRack(123)
   const r = simularTiro(bolas, tiro({ angulo: Math.PI / 2, fuerza: 1 }))

@@ -15,7 +15,7 @@
 
 import {
   Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line,
-  RadialGradient, Rect, Skia, useImage, vec,
+  RadialGradient, Rect, Skia, Text as SkiaText, useFont, useImage, vec,
 } from '@shopify/react-native-skia'
 import { PARAMETROS } from '@/lib/pool/fisica'
 import { calcularGuia } from '@/lib/pool/guia'
@@ -42,6 +42,11 @@ const COLORES_BOLA: Record<number, string> = {
 
 const MARFIL = '#F2EFE8'
 
+// assets/pool-assets/palo_pool.png: 1408×150, punta (virola blanca) a la
+// IZQUIERDA, mango a la derecha — se dibuja rotado con la punta apoyada
+// justo detrás de la blanca, apuntando hacia ella.
+const ASPECTO_TACO = 150 / 1408
+
 interface BolaDibujadaProps {
   cx: number
   cy: number
@@ -50,9 +55,10 @@ interface BolaDibujadaProps {
   rot: number
   dirPx: number // dirección de avance en PANTALLA (y hacia abajo)
   dirPy: number
+  fuente: ReturnType<typeof useFont>
 }
 
-function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy }: BolaDibujadaProps) {
+function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaProps) {
   const rayada = n >= 9
   const color = n === 0 ? MARFIL : COLORES_BOLA[n <= 8 ? n : n - 8]
 
@@ -68,6 +74,9 @@ function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy }: BolaDibujadaProps) {
 
   const clip = Skia.Path.Make()
   clip.addCircle(cx, cy, r)
+
+  const texto = n === 0 ? null : String(n)
+  const anchoTexto = texto && fuente ? fuente.getTextWidth(texto) : 0
 
   return (
     <Group>
@@ -91,6 +100,18 @@ function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy }: BolaDibujadaProps) {
         )}
         {patronVisible && n !== 0 && (
           <Circle cx={cx} cy={cy + offsetLocal} r={r * 0.42 * escala} color={MARFIL} />
+        )}
+        {patronVisible && texto && fuente && (
+          <Group clip={clip}>
+            <SkiaText
+              x={cx - anchoTexto / 2}
+              y={cy + offsetLocal + r * 0.16}
+              text={texto}
+              font={fuente}
+              color={n === 8 ? MARFIL : '#161616'}
+              opacity={escala}
+            />
+          </Group>
         )}
         {patronVisible && n === 0 && (
           <Circle cx={cx} cy={cy + offsetLocal} r={r * 0.14 * escala} color="#C93430" />
@@ -117,6 +138,8 @@ export default function MesaPool({
   const tf = crearTransform(anchoPx)
   const rPx = tf.radioBolaPx
   const fondo = useImage(require('../../../assets/pool-assets/mesa.png'))
+  const taco = useImage(require('../../../assets/pool-assets/palo_pool.png'))
+  const fuenteNumero = useFont(require('../../../assets/pool-assets/fonts/Merriweather-Bold.ttf'), Math.max(9, rPx * 0.85))
 
   // qué bolas dibujar: la animación manda, si no el estado quieto
   const dibujables = muestra
@@ -203,6 +226,7 @@ export default function MesaPool({
             rot={b.rot}
             dirPx={b.dirX}
             dirPy={-b.dirY}
+            fuente={fuenteNumero}
           />
         )
       })}
@@ -215,33 +239,36 @@ export default function MesaPool({
         />
       )}
 
-      {/* taco */}
-      {!muestra && blanca && !bolaEnMano && (
-        <Group>
-          <Line
-            p1={vec(
-              tf.aPantalla({ x: blanca.pos.x - dirX * gap, y: blanca.pos.y - dirY * gap }).x,
-              tf.aPantalla({ x: blanca.pos.x - dirX * gap, y: blanca.pos.y - dirY * gap }).y,
-            )}
-            p2={vec(
-              tf.aPantalla({ x: blanca.pos.x - dirX * (gap + largoTaco), y: blanca.pos.y - dirY * (gap + largoTaco) }).x,
-              tf.aPantalla({ x: blanca.pos.x - dirX * (gap + largoTaco), y: blanca.pos.y - dirY * (gap + largoTaco) }).y,
-            )}
-            color="#B9884A" strokeWidth={Math.max(4, rPx * 0.55)} strokeCap="round"
-          />
-          <Line
-            p1={vec(
-              tf.aPantalla({ x: blanca.pos.x - dirX * gap, y: blanca.pos.y - dirY * gap }).x,
-              tf.aPantalla({ x: blanca.pos.x - dirX * gap, y: blanca.pos.y - dirY * gap }).y,
-            )}
-            p2={vec(
-              tf.aPantalla({ x: blanca.pos.x - dirX * (gap + 0.055), y: blanca.pos.y - dirY * (gap + 0.055) }).x,
-              tf.aPantalla({ x: blanca.pos.x - dirX * (gap + 0.055), y: blanca.pos.y - dirY * (gap + 0.055) }).y,
-            )}
-            color="#E8E4DC" strokeWidth={Math.max(4, rPx * 0.55)} strokeCap="round"
-          />
-        </Group>
-      )}
+      {/* taco: imagen del usuario, rotada con la punta apoyada tras la blanca */}
+      {!muestra && blanca && !bolaEnMano && (() => {
+        const tipMesa = { x: blanca.pos.x - dirX * gap, y: blanca.pos.y - dirY * gap }
+        const buttMesa = { x: blanca.pos.x - dirX * (gap + largoTaco), y: blanca.pos.y - dirY * (gap + largoTaco) }
+        const tipPx = tf.aPantalla(tipMesa)
+        const buttPx = tf.aPantalla(buttMesa)
+        const largoPx = Math.hypot(buttPx.x - tipPx.x, buttPx.y - tipPx.y)
+        const anguloPx = Math.atan2(buttPx.y - tipPx.y, buttPx.x - tipPx.x)
+        const altoPx = Math.max(4, largoPx * ASPECTO_TACO)
+
+        if (!taco) {
+          // fallback mientras carga: dos líneas simples (mismo aspecto que antes)
+          return (
+            <Line
+              p1={vec(tipPx.x, tipPx.y)} p2={vec(buttPx.x, buttPx.y)}
+              color="#B9884A" strokeWidth={Math.max(4, rPx * 0.55)} strokeCap="round"
+            />
+          )
+        }
+        return (
+          <Group origin={vec(tipPx.x, tipPx.y)} transform={[{ rotate: anguloPx }]}>
+            <SkiaImage
+              image={taco}
+              x={tipPx.x} y={tipPx.y - altoPx / 2}
+              width={largoPx} height={altoPx}
+              fit="fill"
+            />
+          </Group>
+        )
+      })()}
     </Canvas>
   )
 }

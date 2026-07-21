@@ -101,23 +101,42 @@ function troneras(): Tronera[] {
 
 export const TRONERAS: readonly Tronera[] = troneras()
 
-// Postes de ceja: puntos duros en los bordes de cada boca, sobre las paredes.
-// Una bola que entra mal a la boca choca el poste y puede salir escupida.
+// Postes de ceja: puntos duros cerca de la boca de cada tronera. Una bola que
+// entra mal choca el poste y puede salir escupida — pero el poste NUNCA debe
+// estorbar un tiro razonablemente apuntado (bug real detectado jugando: la
+// bola rebotaba contra "algo invisible" yendo derecho a la tronera).
+//
+// Modelo POLAR alrededor del centro de cada tronera (no coordenadas de pared):
+// cada poste vive a radioPostes de distancia, a ±deltaPoste del bisector de
+// la boca. El bisector de una tronera de esquina es SIEMPRE 45° de cada banda
+// (geometría real de una mesa, sin importar su proporción ancho/alto) — usar
+// coordenadas de pared para ubicar los postes (como se hacía antes) los deja
+// pegados a la banda o cruzando líneas de tiro razonables según la relación
+// entre parámetros; el modelo polar evita ambos por construcción. Los valores
+// (radioPostes, deltaPoste) fueron encontrados por búsqueda numérica
+// verificando: una bola pegada a cualquier banda hacia la tronera entra limpio,
+// y tiros casi perfectos al bisector desde varios orígenes del tablero no
+// rozan ningún poste (ver historial de commits para el script de búsqueda).
+const RADIO_POSTES_ESQUINA = 0.12
+const DELTA_POSTES_ESQUINA = (70 * Math.PI) / 180
+
+// Las troneras laterales NO llevan postes: su captura/boca son mucho más
+// chicas que las de esquina (0.055/0.068 vs 0.068/0.105 — solo un lado de
+// mesa, sin dos bandas perpendiculares juntándose), y la búsqueda numérica
+// mostró que cualquier poste ahí queda con márgenes de milímetros, listo
+// para volver a "rebotar contra algo invisible". Además es realista: una
+// tronera lateral real tiene mucha menos quijada que una de esquina.
 function postes(): Vec2[] {
   const p: Vec2[] = []
-  const cortaE = 0.095 // dónde termina la pared junto a una esquina
-  const cortaL = PARAMETROS.radioBocaLateral
-  // esquinas: un poste en la pared vertical y otro en la horizontal
-  for (const sx of [-1, 1]) {
-    for (const sy of [-1, 1]) {
-      p.push({ x: sx * MX, y: sy * (MY - cortaE) })
-      p.push({ x: sx * (MX - cortaE), y: sy * MY })
-    }
-  }
-  // laterales: dos postes sobre la pared vertical
-  for (const sx of [-1, 1]) {
-    p.push({ x: sx * MX, y: cortaL })
-    p.push({ x: sx * MX, y: -cortaL })
+  for (const tr of TRONERAS) {
+    if (tr.id === 2 || tr.id === 3) continue // laterales: sin postes
+    const radio = RADIO_POSTES_ESQUINA
+    const delta = DELTA_POSTES_ESQUINA
+    // bisector = dirección desde el centro de la tronera HACIA ADENTRO de la
+    // mesa (hacia el origen); para una esquina cae siempre en 45/135/225/315°
+    const bisector = Math.atan2(-tr.centro.y, -tr.centro.x)
+    p.push({ x: tr.centro.x + radio * Math.cos(bisector - delta), y: tr.centro.y + radio * Math.sin(bisector - delta) })
+    p.push({ x: tr.centro.x + radio * Math.cos(bisector + delta), y: tr.centro.y + radio * Math.sin(bisector + delta) })
   }
   return p
 }
