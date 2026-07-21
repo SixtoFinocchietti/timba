@@ -31,7 +31,11 @@ import {
 // ─── Parámetros (tunables; ver spec §12) ─────────────────────────────────────
 
 export const PARAMETROS = {
-  radioBola: 0.028575,
+  // Radio real de una bola de pool: 0.028575 (57.15mm de diámetro). Se agranda
+  // ~12% (feedback de juego: se veían chicas y algunas se superponían por
+  // pocos píxeles) — junto sube el hit-box real, no solo el dibujo, así se
+  // evita el desfasaje visual/físico que mencionó el usuario.
+  radioBola: 0.032,
   anchoMesa: 1.12, // eje x
   altoMesa: 2.24, // eje y (mesa vertical: cabecera abajo)
   g: 9.8,
@@ -61,9 +65,9 @@ export const PARAMETROS = {
   // La boca de esquina es amplia a propósito: acepta el cono de entrada
   // realista (~90°), no solo la diagonal exacta.
   radioCapturaEsquina: 0.068,
-  radioCapturaLateral: 0.055,
+  radioCapturaLateral: 0.064, // ↑ compensa la bola más grande (sin postes de "red")
   radioBocaEsquina: 0.105, // zona sin pared alrededor del centro de tronera
-  radioBocaLateral: 0.068,
+  radioBocaLateral: 0.078,
   radioPosteCeja: 0.006,
 
   cooldownEventos: 0.05, // s, antirrebote de eventos repetidos (sonido/reglas)

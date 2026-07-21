@@ -159,7 +159,9 @@ export default function MesaPool({
   const rPx = tf.radioBolaPx
   const fondo = useImage(require('../../../assets/pool-assets/mesa.png'))
   const taco = useImage(require('../../../assets/pool-assets/palo_pool.png'))
-  const fuenteNumero = useFont(require('../../../assets/pool-assets/fonts/Merriweather-Bold.ttf'), Math.max(8, rPx * 0.58))
+  // feedback de juego: los números quedaban grandes; se achican de nuevo acá
+  // (y un poco más, "ligeramente") — ojo que rPx ya creció con radioBola
+  const fuenteNumero = useFont(require('../../../assets/pool-assets/fonts/Merriweather-Bold.ttf'), Math.max(7, rPx * 0.48))
 
   // qué bolas dibujar: la animación manda, si no el estado quieto
   const dibujables = muestra
@@ -176,7 +178,7 @@ export default function MesaPool({
   const dirX = Math.cos(angulo)
   const dirY = Math.sin(angulo)
   const gap = 2.4 * R + fuerzaPreview * 0.34
-  const largoTaco = 0.86
+  const largoTaco = 1.05 // feedback de juego: se pedía más grande
 
   return (
     <Canvas style={{ width: tf.anchoPx, height: tf.altoPx }}>
@@ -304,7 +306,9 @@ export default function MesaPool({
         const buttPx = tf.aPantalla(buttMesa)
         const largoPx = Math.hypot(buttPx.x - tipPx.x, buttPx.y - tipPx.y)
         const anguloPx = Math.atan2(buttPx.y - tipPx.y, buttPx.x - tipPx.x)
-        const altoPx = Math.max(4, largoPx * ASPECTO_TACO)
+        // grosor con un plus sobre la proporción real de la foto (feedback:
+        // se veía fino) para que se note bien en pantallas chicas
+        const altoPx = Math.max(5, largoPx * ASPECTO_TACO * 1.3)
 
         if (!taco) {
           // fallback mientras carga: dos líneas simples (mismo aspecto que antes)
