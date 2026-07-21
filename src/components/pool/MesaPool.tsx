@@ -198,19 +198,37 @@ export default function MesaPool({
         </Group>
       )}
 
-      {/* DEBUG temporal: geometría invisible de colisión sobre la mesa real */}
+      {/* DEBUG temporal: geometría invisible de colisión sobre la mesa real.
+          Las 4 bandas se dibujan como líneas independientes (no un solo
+          Rect) porque el arte real recorta la esquina en diagonal cerca de
+          cada tronera: una línea recta hasta el borde exacto se superpone
+          confusamente con esa diagonal. Los recortes/extensiones de cada
+          punta (medidos en píxeles por el usuario sobre un canvas de
+          513×770, acá como fracción para que escale con cualquier tamaño)
+          solo prolijan el dibujo — la física sigue siendo el rectángulo
+          completo (lx,ly), esto no cambia ningún cálculo de colisión. */}
       {debug && (() => {
         const { lx, ly } = limitesJuego()
         const esqSupIzq = tf.aPantalla({ x: -lx, y: ly })
         const anchoRectPx = 2 * lx * tf.sx
         const altoRectPx = 2 * ly * tf.sy
+        const left = esqSupIzq.x
+        const top = esqSupIzq.y
+        const right = left + anchoRectPx
+        const bottom = top + altoRectPx
+        const supTrim = (20 / 513) * tf.anchoPx
+        const infTrim = (23 / 513) * tf.anchoPx
+        const izqExtArriba = (16 / 769.92) * tf.altoPx
+        const izqExtAbajo = (12 / 769.92) * tf.altoPx
+        const derExtArriba = (12 / 769.92) * tf.altoPx
+        const derExtAbajo = (12 / 769.92) * tf.altoPx
         return (
           <Group>
             {/* verde: bandas jugables (donde rebota una bola normal) */}
-            <Rect
-              x={esqSupIzq.x} y={esqSupIzq.y} width={anchoRectPx} height={altoRectPx}
-              style="stroke" strokeWidth={2.5} color="#22C55E"
-            />
+            <Line p1={vec(left + supTrim, top)} p2={vec(right - supTrim, top)} strokeWidth={2.5} color="#22C55E" />
+            <Line p1={vec(left + infTrim, bottom)} p2={vec(right - infTrim, bottom)} strokeWidth={2.5} color="#22C55E" />
+            <Line p1={vec(left, top - izqExtArriba)} p2={vec(left, bottom + izqExtAbajo)} strokeWidth={2.5} color="#22C55E" />
+            <Line p1={vec(right, top - derExtArriba)} p2={vec(right, bottom + derExtAbajo)} strokeWidth={2.5} color="#22C55E" />
             {/* rojo: troneras — sólido = captura, punteado = boca (sin pared) */}
             {TRONERAS.map(t => {
               const p = tf.aPantalla(t.centro)

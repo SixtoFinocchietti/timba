@@ -21,12 +21,16 @@ export const SENSIBILIDAD_APUNTADO = Platform.select({ web: 1.7, default: 6.5 })
 
 // Calibración del asset mesa.png (1234×1852): bordes del paño jugable
 // (la "nariz" de las bandas) como fracción del ancho/alto de la imagen.
+// Medido por el usuario en píxeles sobre una captura de 513×770 (canvas real,
+// sin la barra de título/leyenda) con un editor de fotos — no a ojo como la
+// calibración original. Ver también los offsets de troneras en fisica.ts,
+// resueltos con el mismo procedimiento a partir de estos mismos números.
 export const ASSET_MESA = {
   aspecto: 1852 / 1234, // alto / ancho
-  fx0: 0.159,
-  fx1: 0.843,
-  fy0: 0.117,
-  fy1: 0.891,
+  fx0: 0.1261,
+  fx1: 0.8701,
+  fy0: 0.0596,
+  fy1: 0.9406,
 } as const
 
 export const RELACION_ASPECTO = ASSET_MESA.aspecto // alto/ancho del canvas

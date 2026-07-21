@@ -87,19 +87,27 @@ export interface Tronera {
 }
 
 function troneras(): Tronera[] {
-  const dE = 0.01 // offset diagonal del centro de las esquinas, hacia afuera
-  const dL = 0.028 // offset lateral
+  // Offsets del centro de cada tronera respecto a la esquina/lateral teórica,
+  // medidos en píxeles por el usuario sobre la mesa real (jul 2026) y
+  // resueltos junto con ASSET_MESA (mismo procedimiento, ver transform.ts).
+  // Antes se estimaban a ojo con un único valor simétrico hacia AFUERA; la
+  // medición real muestra que el centro real queda un poco hacia ADENTRO
+  // (offset negativo) y que arriba/abajo no son exactamente iguales — el
+  // arte de la mesa no es perfectamente simétrico verticalmente.
+  const dSupX = -0.0374, dSupY = -0.0314 // esquinas superiores
+  const dInfX = -0.0345, dInfY = -0.0232 // esquinas inferiores
+  const dL = -0.0033 // laterales
   const e = PARAMETROS.radioCapturaEsquina
   const l = PARAMETROS.radioCapturaLateral
   const bE = PARAMETROS.radioBocaEsquina
   const bL = PARAMETROS.radioBocaLateral
   return [
-    { id: 0, centro: { x: -MX - dE, y: MY + dE }, captura: e, boca: bE }, // sup izq
-    { id: 1, centro: { x: MX + dE, y: MY + dE }, captura: e, boca: bE }, // sup der
+    { id: 0, centro: { x: -MX - dSupX, y: MY + dSupY }, captura: e, boca: bE }, // sup izq
+    { id: 1, centro: { x: MX + dSupX, y: MY + dSupY }, captura: e, boca: bE }, // sup der
     { id: 2, centro: { x: -MX - dL, y: 0 }, captura: l, boca: bL }, // lat izq
     { id: 3, centro: { x: MX + dL, y: 0 }, captura: l, boca: bL }, // lat der
-    { id: 4, centro: { x: -MX - dE, y: -MY - dE }, captura: e, boca: bE }, // inf izq
-    { id: 5, centro: { x: MX + dE, y: -MY - dE }, captura: e, boca: bE }, // inf der
+    { id: 4, centro: { x: -MX - dInfX, y: -MY - dInfY }, captura: e, boca: bE }, // inf izq
+    { id: 5, centro: { x: MX + dInfX, y: -MY - dInfY }, captura: e, boca: bE }, // inf der
   ]
 }
 
@@ -121,8 +129,14 @@ export const TRONERAS: readonly Tronera[] = troneras()
 // verificando: una bola pegada a cualquier banda hacia la tronera entra limpio,
 // y tiros casi perfectos al bisector desde varios orígenes del tablero no
 // rozan ningún poste (ver historial de commits para el script de búsqueda).
-const RADIO_POSTES_ESQUINA = 0.12
-const DELTA_POSTES_ESQUINA = (70 * Math.PI) / 180
+// Retunados (jul 2026) tras recalibrar el centro real de las troneras con
+// mediciones en píxeles: el centro quedó más adentro que la estimación a
+// ojo original, así que se necesita más radio para mantener el mismo margen
+// de seguridad. Búsqueda numérica re-verificada por separado para las
+// esquinas de arriba y de abajo (que ya no son simétricas) — convergieron
+// al mismo óptimo, de ahí una sola constante para las 4.
+const RADIO_POSTES_ESQUINA = 0.18
+const DELTA_POSTES_ESQUINA = (80 * Math.PI) / 180
 
 // Las troneras laterales NO llevan postes: su captura/boca son mucho más
 // chicas que las de esquina (0.055/0.068 vs 0.068/0.105 — solo un lado de
