@@ -14,7 +14,7 @@
 // (después de LoadSkiaWeb). No importar directo desde pantallas.
 
 import {
-  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval,
+  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval, Path,
   RadialGradient, Rect, Skia, Text as SkiaText, useFont, useImage, vec,
 } from '@shopify/react-native-skia'
 import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS, limitesJuego } from '@/lib/pool/fisica'
@@ -199,14 +199,16 @@ export default function MesaPool({
       )}
 
       {/* DEBUG temporal: geometría invisible de colisión sobre la mesa real.
-          Las 4 bandas se dibujan como líneas independientes (no un solo
-          Rect) porque el arte real recorta la esquina en diagonal cerca de
-          cada tronera: una línea recta hasta el borde exacto se superpone
-          confusamente con esa diagonal. Los recortes/extensiones de cada
-          punta (medidos en píxeles por el usuario sobre un canvas de
-          513×770, acá como fracción para que escale con cualquier tamaño)
-          solo prolijan el dibujo — la física sigue siendo el rectángulo
-          completo (lx,ly), esto no cambia ningún cálculo de colisión. */}
+          El borde verde se dibuja como un OCTÁGONO, no un rectángulo: el
+          arte real recorta cada esquina en diagonal antes de llegar a la
+          tronera (así es una mesa de pool de verdad), y una línea recta
+          hasta el borde exacto se superponía confusamente con esa diagonal.
+          Los 8 vértices (2 por esquina, uno sobre cada banda que se junta
+          ahí) fueron medidos por el usuario en píxeles sobre un canvas de
+          513×770 — acá como fracción de canvas para escalar a cualquier
+          tamaño. Es solo prolijado visual del overlay: la física sigue
+          siendo el rectángulo completo (lx,ly) de siempre, esto no cambia
+          ningún cálculo de colisión. */}
       {debug && (() => {
         const { lx, ly } = limitesJuego()
         const esqSupIzq = tf.aPantalla({ x: -lx, y: ly })
@@ -216,19 +218,30 @@ export default function MesaPool({
         const top = esqSupIzq.y
         const right = left + anchoRectPx
         const bottom = top + altoRectPx
-        const supTrim = (20 / 513) * tf.anchoPx
-        const infTrim = (23 / 513) * tf.anchoPx
-        const izqExtArriba = (16 / 769.92) * tf.altoPx
-        const izqExtAbajo = (12 / 769.92) * tf.altoPx
-        const derExtArriba = (12 / 769.92) * tf.altoPx
-        const derExtAbajo = (12 / 769.92) * tf.altoPx
+
+        // offset (fracción de ancho/alto de canvas) de cada vértice respecto
+        // a la esquina teórica del rectángulo más cercana
+        const frac = (dxPx: number, dyPx: number) => ({ x: (dxPx / 513) * tf.anchoPx, y: (dyPx / 769.92) * tf.altoPx })
+        const vTopIzq = frac(5, -3), vTopDer = frac(-6, -2)
+        const vIzqArriba = frac(36, 21), vIzqAbajo = frac(40, -26)
+        const vBotIzq = frac(11, -3), vBotDer = frac(-11, -3)
+        const vDerArriba = frac(-35, 20), vDerAbajo = frac(-37, -21)
+
+        const octagono = Skia.Path.Make()
+        octagono.moveTo(left + vTopIzq.x, top + vTopIzq.y)
+        octagono.lineTo(right + vTopDer.x, top + vTopDer.y)
+        octagono.lineTo(right + vDerArriba.x, top + vDerArriba.y)
+        octagono.lineTo(right + vDerAbajo.x, bottom + vDerAbajo.y)
+        octagono.lineTo(right + vBotDer.x, bottom + vBotDer.y)
+        octagono.lineTo(left + vBotIzq.x, bottom + vBotIzq.y)
+        octagono.lineTo(left + vIzqAbajo.x, bottom + vIzqAbajo.y)
+        octagono.lineTo(left + vIzqArriba.x, top + vIzqArriba.y)
+        octagono.close()
+
         return (
           <Group>
             {/* verde: bandas jugables (donde rebota una bola normal) */}
-            <Line p1={vec(left + supTrim, top)} p2={vec(right - supTrim, top)} strokeWidth={2.5} color="#22C55E" />
-            <Line p1={vec(left + infTrim, bottom)} p2={vec(right - infTrim, bottom)} strokeWidth={2.5} color="#22C55E" />
-            <Line p1={vec(left, top - izqExtArriba)} p2={vec(left, bottom + izqExtAbajo)} strokeWidth={2.5} color="#22C55E" />
-            <Line p1={vec(right, top - derExtArriba)} p2={vec(right, bottom + derExtAbajo)} strokeWidth={2.5} color="#22C55E" />
+            <Path path={octagono} style="stroke" strokeWidth={2.5} color="#22C55E" />
             {/* rojo: troneras — sólido = captura, punteado = boca (sin pared) */}
             {TRONERAS.map(t => {
               const p = tf.aPantalla(t.centro)

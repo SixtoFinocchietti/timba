@@ -40,7 +40,7 @@ export interface TransformMesa {
   altoPx: number
   sx: number // px por unidad de mesa en x
   sy: number // px por unidad de mesa en y
-  radioBolaPx: number // media geométrica: reparte la anisotropía
+  radioBolaPx: number // mínimo de sx/sy: el dibujo nunca excede el hit-box real
   aPantalla: (v: Vec2) => { x: number; y: number }
   aMesa: (px: number, py: number) => Vec2
 }
@@ -56,7 +56,12 @@ export function crearTransform(anchoPx: number): TransformMesa {
     altoPx,
     sx,
     sy,
-    radioBolaPx: PARAMETROS.radioBola * Math.sqrt(sx * sy),
+    // el asset y la física no son EXACTAMENTE proporcionales (ver nota de
+    // arriba), así que sx≠sy — dibujar con la media geométrica hacía que el
+    // círculo se pasara del hit-box real en el eje "comprimido" (la bola
+    // parecía cruzar bandas/troneras que en la física todavía no tocó). Con
+    // el mínimo, el dibujo nunca excede la física en ningún eje.
+    radioBolaPx: PARAMETROS.radioBola * Math.min(sx, sy),
     aPantalla: v => ({ x: cx + v.x * sx, y: cy - v.y * sy }),
     aMesa: (px, py) => ({ x: (px - cx) / sx, y: (cy - py) / sy }),
   }
