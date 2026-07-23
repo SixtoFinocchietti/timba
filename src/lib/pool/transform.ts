@@ -9,7 +9,7 @@
 // (Si el arte se re-exporta con el paño exactamente 2:1, esto queda 1:1.)
 
 import { Platform } from 'react-native'
-import { PARAMETROS } from './fisica'
+import { PARAMETROS, limitesJuego } from './fisica'
 import { Vec2 } from './tipos'
 
 // Sensibilidad del apuntado por arrastre (rad por metro de arrastre
@@ -65,4 +65,45 @@ export function crearTransform(anchoPx: number): TransformMesa {
     aPantalla: v => ({ x: cx + v.x * sx, y: cy - v.y * sy }),
     aMesa: (px, py) => ({ x: (px - cx) / sx, y: (cy - py) / sy }),
   }
+}
+
+// Vértices (en píxeles de pantalla) del octágono real de la mesa: el arte
+// recorta cada esquina en diagonal antes de llegar a la tronera (así es una
+// mesa de pool de verdad), mientras que la física usa el rectángulo completo
+// (lx,ly) como límite de banda (ver fisica.ts). Cerca de las esquinas existe
+// una franja donde la física permite posiciones que, en el dibujo, ya caen
+// sobre la madera — este octágono se usa para recortar visualmente la capa
+// de bolas (MesaPool.tsx) y así ninguna bola se vea "flotando" fuera del paño,
+// sin tocar la física. También lo usa el overlay de debug para la línea verde.
+// Los 8 vértices (2 por esquina, uno sobre cada banda que se junta ahí)
+// fueron medidos por el usuario en píxeles sobre un canvas de 513×769.92 —
+// acá como fracción de canvas para escalar a cualquier tamaño.
+export function verticesOctagonoMesa(tf: TransformMesa): Vec2[] {
+  const { lx, ly } = limitesJuego()
+  const esqSupIzq = tf.aPantalla({ x: -lx, y: ly })
+  const anchoRectPx = 2 * lx * tf.sx
+  const altoRectPx = 2 * ly * tf.sy
+  const left = esqSupIzq.x
+  const top = esqSupIzq.y
+  const right = left + anchoRectPx
+  const bottom = top + altoRectPx
+
+  // offset (fracción de ancho/alto de canvas) de cada vértice respecto a la
+  // esquina teórica del rectángulo más cercana
+  const frac = (dxPx: number, dyPx: number) => ({ x: (dxPx / 513) * tf.anchoPx, y: (dyPx / 769.92) * tf.altoPx })
+  const vTopIzq = frac(5, -3), vTopDer = frac(-6, -2)
+  const vIzqArriba = frac(36, 21), vIzqAbajo = frac(40, -26)
+  const vBotIzq = frac(11, -3), vBotDer = frac(-11, -3)
+  const vDerArriba = frac(-35, 20), vDerAbajo = frac(-37, -21)
+
+  return [
+    { x: left + vTopIzq.x, y: top + vTopIzq.y },
+    { x: right + vTopDer.x, y: top + vTopDer.y },
+    { x: right + vDerArriba.x, y: top + vDerArriba.y },
+    { x: right + vDerAbajo.x, y: bottom + vDerAbajo.y },
+    { x: right + vBotDer.x, y: bottom + vBotDer.y },
+    { x: left + vBotIzq.x, y: bottom + vBotIzq.y },
+    { x: left + vIzqAbajo.x, y: bottom + vIzqAbajo.y },
+    { x: left + vIzqArriba.x, y: top + vIzqArriba.y },
+  ]
 }
