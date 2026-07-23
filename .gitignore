@@ -37,6 +37,9 @@ yarn-error.*
 # typescript
 *.tsbuildinfo
 
+# canvaskit (lo regenera `npm install` vía postinstall: setup-skia-web)
+public/canvaskit.wasm
+
 # generated native folders
 /ios
 /android

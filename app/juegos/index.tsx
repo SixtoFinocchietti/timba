@@ -9,6 +9,7 @@ const JUEGOS: { id: string; nombre: string; descripcion: string; icono: IconName
   { id: 'truco', nombre: 'Truco', descripcion: 'Versión argentina', icono: 'machoEspada' },
   { id: 'poker', nombre: 'Póker', descripcion: "Texas Hold'em", icono: 'poker' },
   { id: 'blackjack', nombre: 'Blackjack', descripcion: '21 · Práctica o mesa con amigos', icono: 'poker' },
+  { id: 'pool', nombre: 'Pool', descripcion: '8-Ball · Práctica libre', icono: 'pool' },
 ]
 
 export default function Juegos() {

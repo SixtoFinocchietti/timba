@@ -10,7 +10,7 @@ export type IconName =
   | 'limite' | 'cupo'
   | 'amistosa' | 'conPlata'
   | 'vacioTodoDia' | 'sinDeudas' | 'recordatorio' | 'compartir' | 'yaPague' | 'pagoPendiente'
-  | 'subirImagen' | 'galeria' | 'machoEspada' | 'poker'
+  | 'subirImagen' | 'galeria' | 'machoEspada' | 'poker' | 'pool'
 
 interface AppIconProps {
   name: IconName
@@ -25,6 +25,16 @@ export function AppIcon({ name, size = 24, color = '#C9A84C' }: AppIconProps) {
   const lj = 'round' as const
 
   switch (name) {
+    // ── Pool (bola 8 + taco) ────────────────────────────────────────────────
+    case 'pool':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Circle cx="9" cy="15" r="5.6" stroke={color} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj} />
+          <Circle cx="9" cy="13.4" r="1.9" stroke={color} strokeWidth={sw} strokeLinecap={lc} strokeLinejoin={lj} />
+          <Line x1="14.6" y1="10.4" x2="21" y2="3.4" stroke={color} strokeWidth={sw2} strokeLinecap={lc} />
+        </Svg>
+      )
+
     // ── Dado (Timba, Logo, Join, Vacío timbas) ──────────────────────────────
     case 'timba':
       return (
