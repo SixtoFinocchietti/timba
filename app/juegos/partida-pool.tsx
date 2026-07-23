@@ -197,6 +197,26 @@ export default function PartidaPool() {
     msgTimer.current = setTimeout(() => setMsg(null), ms)
   }, [])
 
+  // Escritura online con reintento simple (auditoría técnica, jul 2026): en
+  // redes mobile inestables un UPDATE puede fallar sin que el rival se
+  // entere nunca — el estado local ya avanzó de forma optimista, así que sin
+  // este chequeo el tirador seguiría jugando "solo" mientras el rival espera
+  // su turno para siempre, en silencio. El payload siempre reemplaza el
+  // estado completo (no incrementa nada), así que reintentar es seguro.
+  const actualizarFilaConReintento = useCallback(async (filaId: string, payload: Record<string, unknown>) => {
+    const intentar = () => supabase.from('partidas_pool')
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq('id', filaId)
+    let { error } = await intentar()
+    if (error) {
+      avisar('No se pudo sincronizar con el rival — reintentando…', 2500)
+      ;({ error } = await intentar())
+    }
+    if (error) {
+      avisar('Seguimos sin conexión con el servidor. Revisá tu internet — si no se recupera, salí y volvé a entrar.', 5000)
+    }
+  }, [avisar])
+
   // ── ONLINE: carga inicial + realtime + presencia ──
   useEffect(() => {
     if (!esOnline || !partidaId) return
@@ -486,9 +506,7 @@ export default function PartidaPool() {
       avisar('La 8 cayó en el break: se arma de nuevo')
     }
 
-    await supabase.from('partidas_pool')
-      .update({ ...up, updated_at: new Date().toISOString() })
-      .eq('id', f.id)
+    await actualizarFilaConReintento(f.id, up)
   }
 
   // ── ONLINE: llegó un update remoto ──
@@ -562,15 +580,12 @@ export default function PartidaPool() {
     setEstado(e2)
     setBolas(finales)
     avisar('Se acabó tu tiempo: bola en mano para el rival')
-    await supabase.from('partidas_pool')
-      .update({
-        estado_juego: e2,
-        estado_bolas: finales.map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, viva: b.viva })),
-        ultimo_tiro: null,
-        num_tiro: num,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', f.id)
+    await actualizarFilaConReintento(f.id, {
+      estado_juego: e2,
+      estado_bolas: finales.map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, viva: b.viva })),
+      ultimo_tiro: null,
+      num_tiro: num,
+    })
   }
 
   // ── ONLINE: abandonar / reclamar por inactividad ──

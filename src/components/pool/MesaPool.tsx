@@ -13,14 +13,25 @@
 // Este archivo importa Skia: en web SOLO debe cargarse vía MesaPoolLazy
 // (después de LoadSkiaWeb). No importar directo desde pantallas.
 
+import { useMemo } from 'react'
 import {
   Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval, Path,
   RadialGradient, Rect, Skia, Text as SkiaText, useFont, useImage, vec,
 } from '@shopify/react-native-skia'
-import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS, limitesJuego } from '@/lib/pool/fisica'
-import { calcularGuia } from '@/lib/pool/guia'
-import { ASSET_MESA, crearTransform } from '@/lib/pool/transform'
-import { Bola, MuestraAnimacion } from '@/lib/pool/tipos'
+import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS } from '@/lib/pool/fisica'
+import { calcularTrayectoriaGuia } from '@/lib/pool/guia'
+import { ASSET_MESA, crearTransform, verticesOctagonoMesa } from '@/lib/pool/transform'
+import { Bola, MuestraAnimacion, Vec2 } from '@/lib/pool/tipos'
+
+// Path de Skia a partir de una polilínea cerrada (usado para el octágono
+// real de la mesa: overlay de debug y clip de la capa de bolas).
+function pathDePoligono(vertices: Vec2[]) {
+  const p = Skia.Path.Make()
+  p.moveTo(vertices[0].x, vertices[0].y)
+  for (let i = 1; i < vertices.length; i++) p.lineTo(vertices[i].x, vertices[i].y)
+  p.close()
+  return p
+}
 
 export interface MesaPoolProps {
   anchoPx: number
@@ -49,10 +60,14 @@ const COLORES_BOLA: Record<number, string> = {
 
 const MARFIL = '#F2EFE8'
 
-// assets/pool-assets/palo_pool.png: 1408×150, punta (virola blanca) a la
-// IZQUIERDA, mango a la derecha — se dibuja rotado con la punta apoyada
-// justo detrás de la blanca, apuntando hacia ella.
-const ASPECTO_TACO = 150 / 1408
+// assets/pool-assets/palo_pool.png: punta (virola blanca) a la IZQUIERDA,
+// mango a la derecha — se dibuja rotado con la punta apoyada justo detrás
+// de la blanca, apuntando hacia ella. El aspecto se lee del archivo real
+// (taco.width()/height()) en vez de hardcodearlo: el asset se reemplazó
+// más de una vez durante el tuning y una constante fija quedaba desincronizada,
+// estirando la imagen (bug real detectado en auditoría, jul 2026).
+const LARGO_TACO = 1.3 // unidades de mesa (antes 1.05: se pidió más grande)
+const GROSOR_TACO_MULT = 1.3 // plus sobre la proporción real de la foto
 
 interface BolaDibujadaProps {
   cx: number
@@ -65,7 +80,12 @@ interface BolaDibujadaProps {
   fuente: ReturnType<typeof useFont>
 }
 
-function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaProps) {
+function BolaDibujada({ cx: cxRaw, cy: cyRaw, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaProps) {
+  // redondear a píxel: a los pocos px de radio que tiene una bola en mobile,
+  // arrastrar coordenadas de subpíxel entre frames se ve como shimmering
+  // (bug real de auditoría, jul 2026 — junto con el óvalo de tamaño fijo abajo)
+  const cx = Math.round(cxRaw)
+  const cy = Math.round(cyRaw)
   const rayada = n >= 9
   const color = n === 0 ? MARFIL : COLORES_BOLA[n <= 8 ? n : n - 8]
 
@@ -106,9 +126,13 @@ function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaP
           </Group>
         )}
         {patronVisible && n !== 0 && fuente && texto && (() => {
-          // parche blanco tipo "píldora": ancho según el texto (los números de
-          // 2 dígitos, 10-15, necesitan más que un círculo fijo) sin desbordar
-          const alturaParche = r * 0.66 * escala
+          // parche blanco tipo "píldora": tamaño FIJO (no escala con la fase
+          // de rotación) — escalarlo generaba un jitter visible de subpíxel
+          // en bolas de pocos px de radio (bug real de auditoría, jul 2026).
+          // El ancho sigue el texto (los números de 2 dígitos, 10-15,
+          // necesitan más que un círculo) sin desbordar; el fundido de
+          // entrada/salida ahora es solo por opacidad, junto con el texto.
+          const alturaParche = r * 0.66
           const anchoParche = Math.max(alturaParche, anchoTexto + r * 0.26)
           return (
             <Oval
@@ -117,6 +141,7 @@ function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaP
               width={anchoParche}
               height={alturaParche}
               color={MARFIL}
+              opacity={escala}
             />
           )
         })()}
@@ -133,7 +158,7 @@ function BolaDibujada({ cx, cy, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaP
           </Group>
         )}
         {patronVisible && n === 0 && (
-          <Circle cx={cx} cy={cy + offsetLocal} r={r * 0.14 * escala} color="#C93430" />
+          <Circle cx={cx} cy={cy + offsetLocal} r={r * 0.14} color="#C93430" opacity={escala} />
         )}
       </Group>
 
@@ -171,14 +196,24 @@ export default function MesaPool({
         .map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot, dirX: b.dirX, dirY: b.dirY }))
 
   const blanca = bolas.find(b => b.n === 0 && b.viva)
-  const guia = !muestra && mostrarGuia && blanca ? calcularGuia(bolas, angulo) : null
-  const objetivo = guia?.bolaObjetivo != null ? bolas.find(b => b.n === guia.bolaObjetivo) : null
+  // guía con 1 rebote en banda (auditoría técnica, jul 2026): muestra el
+  // primer tramo y, si terminó en banda, el tramo posterior a la reflexión
+  // — solo si de verdad hay algo dentro del alcance (ver guia.ts).
+  const trayectoria = !muestra && mostrarGuia && blanca
+    ? calcularTrayectoriaGuia(bolas, angulo, { maxRebotes: 1 })
+    : null
+  const objetivo = trayectoria?.bolaObjetivo != null ? bolas.find(b => b.n === trayectoria.bolaObjetivo) : null
 
   // taco: detrás de la blanca, retrocede con la fuerza
   const dirX = Math.cos(angulo)
   const dirY = Math.sin(angulo)
   const gap = 2.4 * R + fuerzaPreview * 0.34
-  const largoTaco = 1.05 // feedback de juego: se pedía más grande
+
+  // octágono real de la mesa (paño recortado en diagonal en cada esquina):
+  // recorta la capa de bolas para que ninguna se dibuje sobre la banda/madera
+  // (bug real, auditoría jul 2026 — ver nota en transform.ts). Memoizado: solo
+  // depende del ancho del canvas, no hace falta reconstruir el Path cada frame.
+  const octagono = useMemo(() => pathDePoligono(verticesOctagonoMesa(tf)), [anchoPx])
 
   return (
     <Canvas style={{ width: tf.anchoPx, height: tf.altoPx }}>
@@ -199,45 +234,12 @@ export default function MesaPool({
       )}
 
       {/* DEBUG temporal: geometría invisible de colisión sobre la mesa real.
-          El borde verde se dibuja como un OCTÁGONO, no un rectángulo: el
-          arte real recorta cada esquina en diagonal antes de llegar a la
-          tronera (así es una mesa de pool de verdad), y una línea recta
-          hasta el borde exacto se superponía confusamente con esa diagonal.
-          Los 8 vértices (2 por esquina, uno sobre cada banda que se junta
-          ahí) fueron medidos por el usuario en píxeles sobre un canvas de
-          513×770 — acá como fracción de canvas para escalar a cualquier
-          tamaño. Es solo prolijado visual del overlay: la física sigue
-          siendo el rectángulo completo (lx,ly) de siempre, esto no cambia
-          ningún cálculo de colisión. */}
+          El borde verde es el mismo octágono (verticesOctagonoMesa) que ahora
+          también recorta la capa de bolas más abajo — acá solo se dibuja su
+          contorno para diagnosticar troneras/postes de un vistazo. La física
+          sigue siendo el rectángulo completo (lx,ly) de siempre, esto no
+          cambia ningún cálculo de colisión. */}
       {debug && (() => {
-        const { lx, ly } = limitesJuego()
-        const esqSupIzq = tf.aPantalla({ x: -lx, y: ly })
-        const anchoRectPx = 2 * lx * tf.sx
-        const altoRectPx = 2 * ly * tf.sy
-        const left = esqSupIzq.x
-        const top = esqSupIzq.y
-        const right = left + anchoRectPx
-        const bottom = top + altoRectPx
-
-        // offset (fracción de ancho/alto de canvas) de cada vértice respecto
-        // a la esquina teórica del rectángulo más cercana
-        const frac = (dxPx: number, dyPx: number) => ({ x: (dxPx / 513) * tf.anchoPx, y: (dyPx / 769.92) * tf.altoPx })
-        const vTopIzq = frac(5, -3), vTopDer = frac(-6, -2)
-        const vIzqArriba = frac(36, 21), vIzqAbajo = frac(40, -26)
-        const vBotIzq = frac(11, -3), vBotDer = frac(-11, -3)
-        const vDerArriba = frac(-35, 20), vDerAbajo = frac(-37, -21)
-
-        const octagono = Skia.Path.Make()
-        octagono.moveTo(left + vTopIzq.x, top + vTopIzq.y)
-        octagono.lineTo(right + vTopDer.x, top + vTopDer.y)
-        octagono.lineTo(right + vDerArriba.x, top + vDerArriba.y)
-        octagono.lineTo(right + vDerAbajo.x, bottom + vDerAbajo.y)
-        octagono.lineTo(right + vBotDer.x, bottom + vBotDer.y)
-        octagono.lineTo(left + vBotIzq.x, bottom + vBotIzq.y)
-        octagono.lineTo(left + vIzqAbajo.x, bottom + vIzqAbajo.y)
-        octagono.lineTo(left + vIzqArriba.x, top + vIzqArriba.y)
-        octagono.close()
-
         return (
           <Group>
             {/* verde: bandas jugables (donde rebota una bola normal) */}
@@ -266,60 +268,74 @@ export default function MesaPool({
         )
       })()}
 
-      {/* guía de tiro */}
-      {guia && (
-        <Group>
-          <Line
-            p1={vec(tf.aPantalla(guia.origen).x, tf.aPantalla(guia.origen).y)}
-            p2={vec(tf.aPantalla(guia.impacto).x, tf.aPantalla(guia.impacto).y)}
-            color="rgba(255,255,255,0.75)" strokeWidth={2}
-          >
-            <DashPathEffect intervals={[9, 7]} />
-          </Line>
-          <Circle
-            cx={tf.aPantalla(guia.impacto).x} cy={tf.aPantalla(guia.impacto).y} r={rPx}
-            style="stroke" strokeWidth={1.6} color="rgba(255,255,255,0.75)"
-          />
-          {objetivo && guia.dirObjetivo && (
-            <Line
-              p1={vec(tf.aPantalla(objetivo.pos).x, tf.aPantalla(objetivo.pos).y)}
-              p2={vec(
-                tf.aPantalla({ x: objetivo.pos.x + guia.dirObjetivo.x * longitudGuiaObjetivo * R, y: objetivo.pos.y + guia.dirObjetivo.y * longitudGuiaObjetivo * R }).x,
-                tf.aPantalla({ x: objetivo.pos.x + guia.dirObjetivo.x * longitudGuiaObjetivo * R, y: objetivo.pos.y + guia.dirObjetivo.y * longitudGuiaObjetivo * R }).y,
-              )}
-              color="#DFC47A" strokeWidth={2.5}
-            />
-          )}
-          {guia.dirBlanca && (
-            <Line
-              p1={vec(tf.aPantalla(guia.impacto).x, tf.aPantalla(guia.impacto).y)}
-              p2={vec(
-                tf.aPantalla({ x: guia.impacto.x + guia.dirBlanca.x * 4 * R, y: guia.impacto.y + guia.dirBlanca.y * 4 * R }).x,
-                tf.aPantalla({ x: guia.impacto.x + guia.dirBlanca.x * 4 * R, y: guia.impacto.y + guia.dirBlanca.y * 4 * R }).y,
-              )}
-              color="rgba(255,255,255,0.38)" strokeWidth={2}
-            />
-          )}
-        </Group>
-      )}
-
-      {/* bolas */}
-      {dibujables.map(b => {
-        const p = tf.aPantalla({ x: b.x, y: b.y })
+      {/* guía de tiro: 1+ segmentos (blanca→impacto, y tras un rebote en
+          banda, el tramo reflejado) — el tramo post-rebote se dibuja más
+          tenue porque es una aproximación geométrica, sin fricción ni spin. */}
+      {trayectoria && trayectoria.segmentos.length > 0 && (() => {
+        const ultimo = trayectoria.segmentos[trayectoria.segmentos.length - 1]
+        const finUltimoPx = tf.aPantalla(ultimo.fin)
         return (
-          <BolaDibujada
-            key={b.n}
-            cx={p.x}
-            cy={p.y}
-            r={rPx}
-            n={b.n}
-            rot={b.rot}
-            dirPx={b.dirX}
-            dirPy={-b.dirY}
-            fuente={fuenteNumero}
-          />
+          <Group>
+            {trayectoria.segmentos.map((seg, i) => (
+              <Line
+                key={i}
+                p1={vec(tf.aPantalla(seg.origen).x, tf.aPantalla(seg.origen).y)}
+                p2={vec(tf.aPantalla(seg.fin).x, tf.aPantalla(seg.fin).y)}
+                color={i === 0 ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.4)'}
+                strokeWidth={2}
+              >
+                <DashPathEffect intervals={[9, 7]} />
+              </Line>
+            ))}
+            <Circle
+              cx={finUltimoPx.x} cy={finUltimoPx.y} r={rPx}
+              style="stroke" strokeWidth={1.6} color="rgba(255,255,255,0.75)"
+            />
+            {objetivo && trayectoria.dirObjetivo && (
+              <Line
+                p1={vec(tf.aPantalla(objetivo.pos).x, tf.aPantalla(objetivo.pos).y)}
+                p2={vec(
+                  tf.aPantalla({ x: objetivo.pos.x + trayectoria.dirObjetivo.x * longitudGuiaObjetivo * R, y: objetivo.pos.y + trayectoria.dirObjetivo.y * longitudGuiaObjetivo * R }).x,
+                  tf.aPantalla({ x: objetivo.pos.x + trayectoria.dirObjetivo.x * longitudGuiaObjetivo * R, y: objetivo.pos.y + trayectoria.dirObjetivo.y * longitudGuiaObjetivo * R }).y,
+                )}
+                color="#DFC47A" strokeWidth={2.5}
+              />
+            )}
+            {trayectoria.dirBlanca && (
+              <Line
+                p1={vec(finUltimoPx.x, finUltimoPx.y)}
+                p2={vec(
+                  tf.aPantalla({ x: ultimo.fin.x + trayectoria.dirBlanca.x * 4 * R, y: ultimo.fin.y + trayectoria.dirBlanca.y * 4 * R }).x,
+                  tf.aPantalla({ x: ultimo.fin.x + trayectoria.dirBlanca.x * 4 * R, y: ultimo.fin.y + trayectoria.dirBlanca.y * 4 * R }).y,
+                )}
+                color="rgba(255,255,255,0.38)" strokeWidth={2}
+              />
+            )}
+          </Group>
         )
-      })}
+      })()}
+
+      {/* bolas: recortadas al octágono real de la mesa (ver nota arriba y en
+          transform.ts) — ninguna se dibuja fuera del paño, sin importar qué
+          tan cerca de una esquina permita llegar la física rectangular. */}
+      <Group clip={octagono}>
+        {dibujables.map(b => {
+          const p = tf.aPantalla({ x: b.x, y: b.y })
+          return (
+            <BolaDibujada
+              key={b.n}
+              cx={p.x}
+              cy={p.y}
+              r={rPx}
+              n={b.n}
+              rot={b.rot}
+              dirPx={b.dirX}
+              dirPy={-b.dirY}
+              fuente={fuenteNumero}
+            />
+          )
+        })}
+      </Group>
 
       {/* glow de bola en mano */}
       {bolaEnMano && blanca && !muestra && (
@@ -332,14 +348,14 @@ export default function MesaPool({
       {/* taco: imagen del usuario, rotada con la punta apoyada tras la blanca */}
       {!muestra && blanca && !bolaEnMano && (() => {
         const tipMesa = { x: blanca.pos.x - dirX * gap, y: blanca.pos.y - dirY * gap }
-        const buttMesa = { x: blanca.pos.x - dirX * (gap + largoTaco), y: blanca.pos.y - dirY * (gap + largoTaco) }
+        const buttMesa = { x: blanca.pos.x - dirX * (gap + LARGO_TACO), y: blanca.pos.y - dirY * (gap + LARGO_TACO) }
         const tipPx = tf.aPantalla(tipMesa)
         const buttPx = tf.aPantalla(buttMesa)
         const largoPx = Math.hypot(buttPx.x - tipPx.x, buttPx.y - tipPx.y)
         const anguloPx = Math.atan2(buttPx.y - tipPx.y, buttPx.x - tipPx.x)
-        // grosor con un plus sobre la proporción real de la foto (feedback:
-        // se veía fino) para que se note bien en pantallas chicas
-        const altoPx = Math.max(5, largoPx * ASPECTO_TACO * 1.3)
+        // aspecto real del asset cargado (no hardcodeado: ver nota arriba)
+        const aspectoTaco = taco ? taco.height() / taco.width() : 150 / 1408
+        const altoPx = Math.max(5, largoPx * aspectoTaco * GROSOR_TACO_MULT)
 
         if (!taco) {
           // fallback mientras carga: dos líneas simples (mismo aspecto que antes)
