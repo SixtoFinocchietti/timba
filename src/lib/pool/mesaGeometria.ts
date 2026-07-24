@@ -16,17 +16,21 @@ import { PARAMETROS } from './fisica'
 import { Vec2 } from './tipos'
 
 // Calibración del asset mesa.png (1234×1852): bordes del paño jugable
-// (la "nariz" de las bandas) como fracción del ancho/alto de la imagen.
-// Medido por el usuario en píxeles sobre una captura de 513×770 (canvas real,
-// sin la barra de título/leyenda) con un editor de fotos — no a ojo como la
-// calibración original. Ver también los offsets de troneras en fisica.ts,
-// resueltos con el mismo procedimiento a partir de estos mismos números.
+// (la "nariz" de las bandas, el punto real donde una bola rebota — no
+// donde el verde termina a simple vista) como fracción del ancho/alto de
+// la imagen. Recalibrado sobre el archivo real (jul 2026, feedback de
+// juego): la medición anterior (a partir de una captura de canvas de
+// 513×770) quedaba corrida hacia afuera en las 4 bandas — las bolas
+// llegaban a rebotar visiblemente más allá de la "nariz" real, sobre la
+// zona de banda/madera (bug real de auditoría). Medido en píxeles
+// directo sobre mesa.png (1234×1852) con un editor de fotos:
+// superior 129px, inferior 129px, izquierdo 185px, derecho 190px.
 export const ASSET_MESA = {
   aspecto: 1852 / 1234, // alto / ancho
-  fx0: 0.1261,
-  fx1: 0.8701,
-  fy0: 0.0596,
-  fy1: 0.9406,
+  fx0: 0.1499, // 185/1234
+  fx1: 0.846, // 1 - 190/1234
+  fy0: 0.0697, // 129/1852
+  fy1: 0.9303, // 1 - 129/1852
 } as const
 
 export const RELACION_ASPECTO = ASSET_MESA.aspecto // alto/ancho del canvas
