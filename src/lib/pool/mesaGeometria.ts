@@ -65,10 +65,14 @@ export function crearTransform(anchoPx: number): TransformMesa {
 
 // Chaflán de esquina, en unidades de MESA (no píxeles calibrados a mano):
 // el arte recorta cada esquina en diagonal antes de llegar a la tronera
-// (así es una mesa de pool de verdad). Del orden del radio de boca de una
-// tronera de esquina (fisica.ts: radioBocaEsquina=0.105) — generoso para
-// tapar esa franja.
-const CHAFLAN_ESQUINA = 0.1 // unidades de mesa
+// (así es una mesa de pool de verdad). Subido de 0.1 a 0.16 tras feedback
+// de juego real (jul 2026): con 0.1 seguía viéndose una bola por encima de
+// la zona de tronera/metal en la esquina — el bisel visual real del arte
+// es más generoso que el radio de boca de la tronera (radioBocaEsquina en
+// fisica.ts=0.105), que solo describe la zona sin pared, no el corte
+// visual del paño. Pendiente de calibrar con precisión contra el overlay
+// de debug (app/juegos/debug-pool.tsx) en dispositivo real.
+const CHAFLAN_ESQUINA = 0.16 // unidades de mesa
 
 // Vértices (en píxeles de pantalla) del octágono real de la mesa. Usado
 // para recortar visualmente la capa de bolas (MesaPool.tsx) — así ninguna
