@@ -20,6 +20,7 @@ import {
 } from '@shopify/react-native-skia'
 import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS } from '@/lib/pool/fisica'
 import { calcularTrayectoriaGuia } from '@/lib/pool/guia'
+import { TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
 import { ASSET_MESA, crearTransform, verticesOctagonoMesa } from '@/lib/pool/transform'
 import { Bola, MuestraAnimacion, Vec2 } from '@/lib/pool/tipos'
 
@@ -48,6 +49,8 @@ export interface MesaPoolProps {
   // ayuda de la dificultad Fácil (spec §10): línea de dirección de la bola
   // objetivo mucho más larga, en radios de bola (default: guía normal)
   longitudGuiaObjetivo?: number
+  // variante visual del taco (spec skins, jul 2026) — default: TACO_DEFAULT
+  tacoSkin?: TacoSkinId
 }
 
 const R = PARAMETROS.radioBola
@@ -178,12 +181,19 @@ function BolaDibujada({ cx: cxRaw, cy: cyRaw, r, n, rot, dirPx, dirPy, fuente }:
 
 export default function MesaPool({
   anchoPx, bolas, muestra, angulo, fuerzaPreview, mostrarGuia, bolaEnMano,
-  longitudGuiaObjetivo = 6, debug = false,
+  longitudGuiaObjetivo = 6, debug = false, tacoSkin = TACO_DEFAULT,
 }: MesaPoolProps) {
   const tf = crearTransform(anchoPx)
   const rPx = tf.radioBolaPx
   const fondo = useImage(require('../../../assets/pool-assets/mesa.png'))
-  const taco = useImage(require('../../../assets/pool-assets/palo_pool.png'))
+  // las 3 variantes se cargan siempre (reglas de hooks: no se puede llamar
+  // useImage condicionalmente) y se elige cuál dibujar más abajo — son
+  // livianas (solo el taco) y evita requires dinámicos, que Metro no puede
+  // resolver.
+  const tacoPremium = useImage(require('../../../assets/pool-assets/palo_pool.png'))
+  const tacoOscuro = useImage(require('../../../assets/pool-assets/palo_pool_1.png'))
+  const tacoClaro = useImage(require('../../../assets/pool-assets/palo_pool_2.png'))
+  const taco = tacoSkin === 'premium' ? tacoPremium : tacoSkin === 'claro' ? tacoClaro : tacoOscuro
   // feedback de juego: los números quedaban grandes; se achican de nuevo acá
   // (y un poco más, "ligeramente") — ojo que rPx ya creció con radioBola
   const fuenteNumero = useFont(require('../../../assets/pool-assets/fonts/Merriweather-Bold.ttf'), Math.max(7, rPx * 0.48))

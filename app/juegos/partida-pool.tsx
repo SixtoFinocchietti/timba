@@ -24,8 +24,10 @@ import { ColoresTema } from '@/lib/colores'
 import MesaPoolLazy from '@/components/pool/MesaPoolLazy'
 import ControlFuerza from '@/components/pool/ControlFuerza'
 import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
+import SelectorSkins from '@/components/pool/SelectorSkins'
 import { useSonidoPool } from '@/lib/pool/sonido'
 import { haptica } from '@/lib/pool/haptica'
+import { CLAVE_TACO_SKIN, TACO_DEFAULT, TACOS, TacoSkinId } from '@/lib/pool/skins'
 import {
   CABECERA_Y, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
 } from '@/lib/pool/fisica'
@@ -62,6 +64,15 @@ const COLORES_RIEL: Record<number, string> = {
   1: '#F0B428', 2: '#1E5AA8', 3: '#C93430', 4: '#5B3E8F',
   5: '#E07B28', 6: '#1F7A4D', 7: '#8A3038', 8: '#161616',
 }
+
+// opciones del selector de taco: TACOS (skins.ts) es solo metadata, el
+// preview (require) tiene que ser un literal estático acá
+const IMAGENES_TACO: Record<TacoSkinId, any> = {
+  oscuro: require('../../assets/pool-assets/palo_pool_1.png'),
+  claro: require('../../assets/pool-assets/palo_pool_2.png'),
+  premium: require('../../assets/pool-assets/palo_pool.png'),
+}
+const OPCIONES_TACO = TACOS.map(t => ({ id: t.id, nombre: t.nombre, preview: IMAGENES_TACO[t.id] }))
 
 function nuevaSeed(): number {
   return (Date.now() ^ (Math.random() * 0x7fffffff)) | 0
@@ -112,6 +123,8 @@ export default function PartidaPool() {
   const [pensando, setPensando] = useState(false)
   const [bolaEnManoPractica, setBolaEnManoPractica] = useState(false)
   const [spinAbierto, setSpinAbierto] = useState(false)
+  const [skinsAbierto, setSkinsAbierto] = useState(false)
+  const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
   const [msg, setMsg] = useState<string | null>(null)
   const [anchoMesa, setAnchoMesa] = useState(0)
   const [sonido, setSonido] = useState(true)
@@ -155,7 +168,15 @@ export default function PartidaPool() {
 
   useEffect(() => {
     AsyncStorage.getItem('@timba:pool_sonido').then(v => { if (v === '0') setSonido(false) })
+    AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
+      if (v && TACOS.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+    })
   }, [])
+
+  function elegirTacoSkin(id: string) {
+    setTacoSkin(id as TacoSkinId)
+    AsyncStorage.setItem(CLAVE_TACO_SKIN, id)
+  }
 
   function toggleSonido() {
     setSonido(s => {
@@ -829,6 +850,7 @@ export default function PartidaPool() {
                   mostrarGuia={!animando && turnoMio}
                   bolaEnMano={bolaEnMano}
                   longitudGuiaObjetivo={esBot && dificultad === 'facil' ? 40 : 6}
+                  tacoSkin={tacoSkin}
                 />
               </View>
             </GestureDetector>
@@ -883,6 +905,14 @@ export default function PartidaPool() {
             </View>
             <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Efecto</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[es.botonSpin, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+            onPress={() => setSkinsAbierto(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 16 }}>🎨</Text>
+            <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Taco</Text>
+          </TouchableOpacity>
         </View>
 
         {puedeReclamar ? (
@@ -917,6 +947,14 @@ export default function PartidaPool() {
       </View>
 
       <SelectorSpin visible={spinAbierto} spin={spin} onCerrar={() => setSpinAbierto(false)} onElegir={setSpin} />
+      <SelectorSkins
+        visible={skinsAbierto}
+        titulo="Elegí tu taco"
+        opciones={OPCIONES_TACO}
+        seleccionado={tacoSkin}
+        onCerrar={() => setSkinsAbierto(false)}
+        onElegir={elegirTacoSkin}
+      />
 
       {/* overlay: elección tras break inválido (solo vs bot) */}
       {eligeRebreak && (
