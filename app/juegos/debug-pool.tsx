@@ -65,8 +65,12 @@ export default function DebugPool() {
 
       <View style={es.leyenda}>
         <View style={es.leyendaItem}>
+          <View style={[es.chip, { backgroundColor: '#F5B301' }]} />
+          <Text style={[es.leyendaTexto, { color: c.textoSuave }]}>Límite real de rebote</Text>
+        </View>
+        <View style={es.leyendaItem}>
           <View style={[es.chip, { backgroundColor: '#22C55E' }]} />
-          <Text style={[es.leyendaTexto, { color: c.textoSuave }]}>Bandas jugables</Text>
+          <Text style={[es.leyendaTexto, { color: c.textoSuave }]}>Recorte visual de bolas</Text>
         </View>
         <View style={es.leyendaItem}>
           <View style={[es.chip, { backgroundColor: 'rgba(220,38,38,0.7)' }]} />
@@ -78,7 +82,9 @@ export default function DebugPool() {
         </View>
       </View>
       <Text style={[es.ayuda, { color: c.textoSuave }]}>
-        Arrastrá la bola blanca. El punteado rojo es donde deja de haber pared (boca de la tronera).
+        Arrastrá la bola blanca. El rectángulo amarillo es donde rebota de verdad la física; el
+        verde es solo el recorte visual (más generoso en las esquinas). El punteado rojo es donde
+        deja de haber pared (boca de la tronera).
       </Text>
 
       <View

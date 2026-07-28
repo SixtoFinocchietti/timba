@@ -24,8 +24,10 @@ import { ColoresTema } from '@/lib/colores'
 import MesaPoolLazy from '@/components/pool/MesaPoolLazy'
 import ControlFuerza from '@/components/pool/ControlFuerza'
 import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
+import SelectorSkins from '@/components/pool/SelectorSkins'
 import { useSonidoPool } from '@/lib/pool/sonido'
 import { haptica } from '@/lib/pool/haptica'
+import { CLAVE_TACO_SKIN, TACO_DEFAULT, TACOS, TacoSkinId } from '@/lib/pool/skins'
 import {
   CABECERA_Y, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
 } from '@/lib/pool/fisica'
@@ -62,6 +64,15 @@ const COLORES_RIEL: Record<number, string> = {
   1: '#F0B428', 2: '#1E5AA8', 3: '#C93430', 4: '#5B3E8F',
   5: '#E07B28', 6: '#1F7A4D', 7: '#8A3038', 8: '#161616',
 }
+
+// opciones del selector de taco: TACOS (skins.ts) es solo metadata, el
+// preview (require) tiene que ser un literal estático acá
+const IMAGENES_TACO: Record<TacoSkinId, any> = {
+  oscuro: require('../../assets/pool-assets/palo_pool_1.png'),
+  claro: require('../../assets/pool-assets/palo_pool_2.png'),
+  premium: require('../../assets/pool-assets/palo_pool.png'),
+}
+const OPCIONES_TACO = TACOS.map(t => ({ id: t.id, nombre: t.nombre, preview: IMAGENES_TACO[t.id] }))
 
 function nuevaSeed(): number {
   return (Date.now() ^ (Math.random() * 0x7fffffff)) | 0
@@ -112,6 +123,8 @@ export default function PartidaPool() {
   const [pensando, setPensando] = useState(false)
   const [bolaEnManoPractica, setBolaEnManoPractica] = useState(false)
   const [spinAbierto, setSpinAbierto] = useState(false)
+  const [skinsAbierto, setSkinsAbierto] = useState(false)
+  const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
   const [msg, setMsg] = useState<string | null>(null)
   const [anchoMesa, setAnchoMesa] = useState(0)
   const [sonido, setSonido] = useState(true)
@@ -155,7 +168,15 @@ export default function PartidaPool() {
 
   useEffect(() => {
     AsyncStorage.getItem('@timba:pool_sonido').then(v => { if (v === '0') setSonido(false) })
+    AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
+      if (v && TACOS.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+    })
   }, [])
+
+  function elegirTacoSkin(id: string) {
+    setTacoSkin(id as TacoSkinId)
+    AsyncStorage.setItem(CLAVE_TACO_SKIN, id)
+  }
 
   function toggleSonido() {
     setSonido(s => {
@@ -196,6 +217,26 @@ export default function PartidaPool() {
     if (msgTimer.current) clearTimeout(msgTimer.current)
     msgTimer.current = setTimeout(() => setMsg(null), ms)
   }, [])
+
+  // Escritura online con reintento simple (auditoría técnica, jul 2026): en
+  // redes mobile inestables un UPDATE puede fallar sin que el rival se
+  // entere nunca — el estado local ya avanzó de forma optimista, así que sin
+  // este chequeo el tirador seguiría jugando "solo" mientras el rival espera
+  // su turno para siempre, en silencio. El payload siempre reemplaza el
+  // estado completo (no incrementa nada), así que reintentar es seguro.
+  const actualizarFilaConReintento = useCallback(async (filaId: string, payload: Record<string, unknown>) => {
+    const intentar = () => supabase.from('partidas_pool')
+      .update({ ...payload, updated_at: new Date().toISOString() })
+      .eq('id', filaId)
+    let { error } = await intentar()
+    if (error) {
+      avisar('No se pudo sincronizar con el rival — reintentando…', 2500)
+      ;({ error } = await intentar())
+    }
+    if (error) {
+      avisar('Seguimos sin conexión con el servidor. Revisá tu internet — si no se recupera, salí y volvé a entrar.', 5000)
+    }
+  }, [avisar])
 
   // ── ONLINE: carga inicial + realtime + presencia ──
   useEffect(() => {
@@ -486,9 +527,7 @@ export default function PartidaPool() {
       avisar('La 8 cayó en el break: se arma de nuevo')
     }
 
-    await supabase.from('partidas_pool')
-      .update({ ...up, updated_at: new Date().toISOString() })
-      .eq('id', f.id)
+    await actualizarFilaConReintento(f.id, up)
   }
 
   // ── ONLINE: llegó un update remoto ──
@@ -562,15 +601,12 @@ export default function PartidaPool() {
     setEstado(e2)
     setBolas(finales)
     avisar('Se acabó tu tiempo: bola en mano para el rival')
-    await supabase.from('partidas_pool')
-      .update({
-        estado_juego: e2,
-        estado_bolas: finales.map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, viva: b.viva })),
-        ultimo_tiro: null,
-        num_tiro: num,
-        updated_at: new Date().toISOString(),
-      })
-      .eq('id', f.id)
+    await actualizarFilaConReintento(f.id, {
+      estado_juego: e2,
+      estado_bolas: finales.map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, viva: b.viva })),
+      ultimo_tiro: null,
+      num_tiro: num,
+    })
   }
 
   // ── ONLINE: abandonar / reclamar por inactividad ──
@@ -814,6 +850,7 @@ export default function PartidaPool() {
                   mostrarGuia={!animando && turnoMio}
                   bolaEnMano={bolaEnMano}
                   longitudGuiaObjetivo={esBot && dificultad === 'facil' ? 40 : 6}
+                  tacoSkin={tacoSkin}
                 />
               </View>
             </GestureDetector>
@@ -868,6 +905,14 @@ export default function PartidaPool() {
             </View>
             <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Efecto</Text>
           </TouchableOpacity>
+          <TouchableOpacity
+            style={[es.botonSpin, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+            onPress={() => setSkinsAbierto(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={{ fontSize: 16 }}>🎨</Text>
+            <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Taco</Text>
+          </TouchableOpacity>
         </View>
 
         {puedeReclamar ? (
@@ -902,6 +947,14 @@ export default function PartidaPool() {
       </View>
 
       <SelectorSpin visible={spinAbierto} spin={spin} onCerrar={() => setSpinAbierto(false)} onElegir={setSpin} />
+      <SelectorSkins
+        visible={skinsAbierto}
+        titulo="Elegí tu taco"
+        opciones={OPCIONES_TACO}
+        seleccionado={tacoSkin}
+        onCerrar={() => setSkinsAbierto(false)}
+        onElegir={elegirTacoSkin}
+      />
 
       {/* overlay: elección tras break inválido (solo vs bot) */}
       {eligeRebreak && (
