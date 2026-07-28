@@ -12,12 +12,13 @@
 // solo se agrega si de verdad hay algo (bola u otra banda) dentro del
 // alcance restante; si no, la guía simplemente no continúa.
 
-import { PARAMETROS } from './fisica'
+import { PARAMETROS, limitesJuego } from './fisica'
 import { Bola, Vec2 } from './tipos'
 
 const R = PARAMETROS.radioBola
-const LX = PARAMETROS.anchoMesa / 2 - R // límite del centro de la bola
-const LY = PARAMETROS.altoMesa / 2 - R
+// misma fuente de verdad que chocarBandas() (fisica.ts) — la guía tiene que
+// terminar exactamente donde la bola de verdad rebota, no en un cálculo aparte
+const { lx: LX, ly: LY } = limitesJuego()
 
 export interface GuiaTiro {
   origen: Vec2

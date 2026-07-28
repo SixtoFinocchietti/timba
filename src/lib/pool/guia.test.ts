@@ -3,13 +3,13 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PARAMETROS } from './fisica'
+import { limitesJuego } from './fisica'
 import { calcularGuia, calcularTrayectoriaGuia } from './guia'
 import { Bola } from './tipos'
 
-const R = PARAMETROS.radioBola
-const LX = PARAMETROS.anchoMesa / 2 - R
-const LY = PARAMETROS.altoMesa / 2 - R
+// misma fuente de verdad que la física real (chocarBandas) — nunca
+// recalcular esto en paralelo, es justo el bug que motivó este archivo
+const { lx: LX, ly: LY } = limitesJuego()
 
 function bola(n: number, x: number, y: number): Bola {
   return { n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true, rot: 0, dirX: 0, dirY: 1 }

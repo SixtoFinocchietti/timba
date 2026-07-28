@@ -7,10 +7,8 @@
 
 import { test } from 'node:test'
 import assert from 'node:assert/strict'
-import { PARAMETROS } from './fisica'
+import { PARAMETROS, limitesJuego } from './fisica'
 import { crearTransform, verticesOctagonoMesa } from './mesaGeometria'
-
-const R = PARAMETROS.radioBola
 
 for (const anchoPx of [200, 513, 900]) {
   test(`verticesOctagonoMesa: tramos rectos anclados al borde real de la mesa (anchoPx=${anchoPx})`, () => {
@@ -36,8 +34,9 @@ for (const anchoPx of [200, 513, 900]) {
     const tf = crearTransform(anchoPx)
     const v = verticesOctagonoMesa(tf)
     const rPx = tf.radioBolaPx
-    const lx = PARAMETROS.anchoMesa / 2 - R
-    const ly = PARAMETROS.altoMesa / 2 - R
+    // misma fuente de verdad que chocarBandas() (fisica.ts) — dónde puede
+    // llegar de verdad el centro de una bola, no un recálculo aparte
+    const { lx, ly } = limitesJuego()
 
     // centro de una bola pegada a cada banda (a mitad de camino del tramo recto)
     const pegadaIzq = tf.aPantalla({ x: -lx, y: 0 })

@@ -96,7 +96,7 @@ function troneras(): Tronera[] {
   // arte de la mesa no es perfectamente simétrico verticalmente.
   const dSupX = -0.0090, dSupY = -0.0030 // esquinas superiores
   const dInfX = -0.0005, dInfY = 0.0010 // esquinas inferiores
-  const dL = 0.0330 // laterales
+  const dL = 0.0100 // laterales
   const e = PARAMETROS.radioCapturaEsquina
   const l = PARAMETROS.radioCapturaLateral
   const bE = PARAMETROS.radioBocaEsquina
@@ -163,8 +163,16 @@ function postes(): Vec2[] {
 // esta geometría invisible sobre la mesa real para diagnosticar de un vistazo.
 export const POSTES: readonly Vec2[] = postes()
 export const RADIO_COLISION_POSTE = R + PARAMETROS.radioPosteCeja
+
+// Límite de colisión de banda — mitad del ancho/alto real de la mesa
+// (constante física, no algo a calibrar contra el arte: a diferencia de
+// las troneras, acá no hay "otra posición real" distinta a MX/MY que
+// medir). Única fuente de verdad: chocarBandas() la usa para el rebote
+// real, y MesaPool.tsx la usa para el rectángulo amarillo del debug —
+// antes estaban duplicadas (mismo valor escrito dos veces), unificado
+// jul 2026 para que nunca puedan desincronizarse.
 export function limitesJuego() {
-  return { lx: MX - R, ly: MY - R }
+  return { lx: MX - R, ly: MY - R}
 }
 
 // ─── Helpers ─────────────────────────────────────────────────────────────────
@@ -440,8 +448,7 @@ function rebotarPared(b: Bola, nx: number, ny: number): number {
 // Devuelve la energía del rebote (0 si no hubo) para el evento de banda.
 function chocarBandas(b: Bola): number {
   let energia = 0
-  const lx = MX - R
-  const ly = MY - R
+  const { lx, ly } = limitesJuego()
   if (b.pos.x < -lx) {
     b.pos.x = -lx
     energia = Math.max(energia, rebotarPared(b, 1, 0))
@@ -606,7 +613,8 @@ export function simularTiro(bolasIniciales: Bola[], tiro: Tiro, opts?: OpcionesS
 
 // ¿Es válida esta posición para colocar la blanca (bola en mano)?
 export function posicionBlancaValida(bolas: Bola[], pos: Vec2, soloCabecera: boolean): boolean {
-  if (Math.abs(pos.x) > MX - R || Math.abs(pos.y) > MY - R) return false
+  const { lx, ly } = limitesJuego()
+  if (Math.abs(pos.x) > lx || Math.abs(pos.y) > ly) return false
   if (soloCabecera && pos.y > CABECERA_Y) return false
   for (const b of bolas) {
     if (b.n === 0 || !b.viva) continue
