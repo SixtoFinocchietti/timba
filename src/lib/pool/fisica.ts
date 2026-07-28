@@ -64,10 +64,10 @@ export const PARAMETROS = {
   // Troneras: capturas generosas para mobile (spec §5) — radio ~2.1× bola.
   // La boca de esquina es amplia a propósito: acepta el cono de entrada
   // realista (~90°), no solo la diagonal exacta.
-  radioCapturaEsquina: 0.068,
-  radioCapturaLateral: 0.064, // ↑ compensa la bola más grande (sin postes de "red")
-  radioBocaEsquina: 0.105, // zona sin pared alrededor del centro de tronera
-  radioBocaLateral: 0.078,
+  radioCapturaEsquina: 0.078,
+  radioCapturaLateral: 0.068, // ↑ compensa la bola más grande (sin postes de "red")
+  radioBocaEsquina: 0.078, // zona sin pared alrededor del centro de tronera
+  radioBocaLateral: 0.068,
   radioPosteCeja: 0.006,
 
   cooldownEventos: 0.05, // s, antirrebote de eventos repetidos (sonido/reglas)
@@ -94,9 +94,9 @@ function troneras(): Tronera[] {
   // medición real muestra que el centro real queda un poco hacia ADENTRO
   // (offset negativo) y que arriba/abajo no son exactamente iguales — el
   // arte de la mesa no es perfectamente simétrico verticalmente.
-  const dSupX = -0.0374, dSupY = -0.0314 // esquinas superiores
-  const dInfX = -0.0345, dInfY = -0.0232 // esquinas inferiores
-  const dL = -0.0033 // laterales
+  const dSupX = -0.0090, dSupY = -0.0030 // esquinas superiores
+  const dInfX = -0.0005, dInfY = 0.0010 // esquinas inferiores
+  const dL = 0.0330 // laterales
   const e = PARAMETROS.radioCapturaEsquina
   const l = PARAMETROS.radioCapturaLateral
   const bE = PARAMETROS.radioBocaEsquina

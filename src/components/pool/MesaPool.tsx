@@ -18,7 +18,7 @@ import {
   Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval, Path,
   RadialGradient, Rect, Skia, Text as SkiaText, useFont, useImage, vec,
 } from '@shopify/react-native-skia'
-import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS } from '@/lib/pool/fisica'
+import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS, limitesJuego } from '@/lib/pool/fisica'
 import { calcularTrayectoriaGuia } from '@/lib/pool/guia'
 import { TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
 import { ASSET_MESA, crearTransform, verticesOctagonoMesa } from '@/lib/pool/transform'
@@ -250,9 +250,26 @@ export default function MesaPool({
           sigue siendo el rectángulo completo (lx,ly) de siempre, esto no
           cambia ningún cálculo de colisión. */}
       {debug && (() => {
+        // amarillo: rectángulo de colisión REAL (fisica.ts: limitesJuego, lx/ly)
+        // — donde el CENTRO de una bola rebota de verdad. Es más grande que el
+        // octágono verde en las esquinas a propósito: ese octágono es solo el
+        // recorte visual (más generoso que la física para no cortar bolas en
+        // tramos rectos), no la colisión en sí. Compararlos de un vistazo sirve
+        // para calibrar el chaflán sin adivinar.
+        const { lx, ly } = limitesJuego()
+        const esqSupIzq = tf.aPantalla({ x: -lx, y: ly })
+        const esqInfDer = tf.aPantalla({ x: lx, y: -ly })
+
         return (
           <Group>
-            {/* verde: bandas jugables (donde rebota una bola normal) */}
+            <Rect
+              x={esqSupIzq.x} y={esqSupIzq.y}
+              width={esqInfDer.x - esqSupIzq.x} height={esqInfDer.y - esqSupIzq.y}
+              style="stroke" strokeWidth={2} color="#F5B301"
+            >
+              <DashPathEffect intervals={[4, 4]} />
+            </Rect>
+            {/* verde: recorte visual de bolas (ver nota arriba) */}
             <Path path={octagono} style="stroke" strokeWidth={2.5} color="#22C55E" />
             {/* rojo: troneras — sólido = captura, punteado = boca (sin pared) */}
             {TRONERAS.map(t => {

@@ -76,7 +76,7 @@ export function crearTransform(anchoPx: number): TransformMesa {
 // fisica.ts=0.105), que solo describe la zona sin pared, no el corte
 // visual del paño. Pendiente de calibrar con precisión contra el overlay
 // de debug (app/juegos/debug-pool.tsx) en dispositivo real.
-const CHAFLAN_ESQUINA = 0.16 // unidades de mesa
+const CHAFLAN_ESQUINA = 0.05 // unidades de mesa
 
 // Vértices (en píxeles de pantalla) del octágono real de la mesa. Usado
 // para recortar visualmente la capa de bolas (MesaPool.tsx) — así ninguna
