@@ -24,7 +24,6 @@ import { ColoresTema } from '@/lib/colores'
 import MesaPoolLazy from '@/components/pool/MesaPoolLazy'
 import ControlFuerza from '@/components/pool/ControlFuerza'
 import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
-import SelectorSkins from '@/components/pool/SelectorSkins'
 import { useSonidoPool } from '@/lib/pool/sonido'
 import { haptica } from '@/lib/pool/haptica'
 import { CLAVE_TACO_SKIN, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
@@ -115,7 +114,6 @@ export default function PartidaPool() {
   const [pensando, setPensando] = useState(false)
   const [bolaEnManoPractica, setBolaEnManoPractica] = useState(false)
   const [spinAbierto, setSpinAbierto] = useState(false)
-  const [skinsAbierto, setSkinsAbierto] = useState(false)
   const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
   const [nivelAsistencia, setNivelAsistencia] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
   const [anguloSugerido, setAnguloSugerido] = useState<number | null>(null)
@@ -171,11 +169,6 @@ export default function PartidaPool() {
       if (v === 'sin' || v === 'baja' || v === 'normal' || v === 'maxima') setNivelAsistencia(v)
     })
   }, [])
-
-  function elegirTacoSkin(id: string) {
-    setTacoSkin(id as TacoSkinId)
-    AsyncStorage.setItem(CLAVE_TACO_SKIN, id)
-  }
 
   // sugerencia del bot en práctica libre (spec §3): mesa abierta, sin
   // estado de reglas — "objetivos" son todas las bolas vivas salvo la
@@ -773,6 +766,24 @@ export default function PartidaPool() {
         )}
       </View>
 
+      {/* fila de práctica libre: usa el espacio libre arriba de la mesa
+          (feedback de juego real, jul 2026) en vez de competir con Efecto y
+          los botones de fino en la barra de abajo, que en pantallas
+          angostas no entraban los cuatro juntos */}
+      {!esBot && !esOnline && (
+        <View style={es.filaSuperior}>
+          <TouchableOpacity
+            style={[es.botonSuperior, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+            onPress={sugerirTiro}
+            activeOpacity={0.8}
+            disabled={!controlesActivos}
+          >
+            <Text style={{ fontSize: 15 }}>💡</Text>
+            <Text style={[es.botonSuperiorTexto, { color: c.textoSuave }]}>Sugerencia</Text>
+          </TouchableOpacity>
+        </View>
+      )}
+
       {/* HUD superior */}
       {conReglas && estado ? (
         <View style={es.hudBot}>
@@ -921,25 +932,6 @@ export default function PartidaPool() {
             </View>
             <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Efecto</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[es.botonSpin, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
-            onPress={() => setSkinsAbierto(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={{ fontSize: 16 }}>🎨</Text>
-            <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Taco</Text>
-          </TouchableOpacity>
-          {!esBot && !esOnline && (
-            <TouchableOpacity
-              style={[es.botonSpin, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
-              onPress={sugerirTiro}
-              activeOpacity={0.8}
-              disabled={!controlesActivos}
-            >
-              <Text style={{ fontSize: 16 }}>💡</Text>
-              <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Sugerencia</Text>
-            </TouchableOpacity>
-          )}
         </View>
 
         {puedeReclamar ? (
@@ -974,14 +966,6 @@ export default function PartidaPool() {
       </View>
 
       <SelectorSpin visible={spinAbierto} spin={spin} onCerrar={() => setSpinAbierto(false)} onElegir={setSpin} />
-      <SelectorSkins
-        visible={skinsAbierto}
-        titulo="Elegí tu taco"
-        opciones={OPCIONES_TACO}
-        seleccionado={tacoSkin}
-        onCerrar={() => setSkinsAbierto(false)}
-        onElegir={elegirTacoSkin}
-      />
 
       {/* overlay: elección tras break inválido (solo vs bot) */}
       {eligeRebreak && (
@@ -1080,6 +1064,12 @@ function makeEstilos(c: ColoresTema) {
     chipBolas: { flexDirection: 'row', gap: 3, minHeight: 12 },
     vs: { fontSize: 12, fontWeight: '800' },
     timer: { fontSize: 11, fontWeight: '800' },
+    filaSuperior: { alignItems: 'flex-end', paddingHorizontal: 20, paddingTop: 2 },
+    botonSuperior: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6,
+    },
+    botonSuperiorTexto: { fontSize: 12, fontWeight: '700' },
     riel: { minHeight: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
     rielVacio: { fontSize: 11, textAlign: 'center' },
     rielBolas: { flexDirection: 'row', gap: 5 },
