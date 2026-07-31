@@ -56,6 +56,15 @@ const GRACIA_RECLAMO_MS = 300_000 // 5 min de ausencia sostenida = termina la pa
 const HUMANO: Jugador = 'A' // en bot: humano=A, bot=B; en online: host=A
 const BOT: Jugador = 'B'
 
+interface TimbaFinal {
+  tipo: 'amistosa' | 'monetaria'
+  premio_descripcion: string | null
+  prenda_descripcion: string | null
+  monto_minimo: number | null
+  estado: 'activa' | 'en_disputa' | 'cerrada' | 'cancelada'
+  resultado_ganador: string | null
+}
+
 const NOMBRE_DIFICULTAD: Record<Dificultad, string> = {
   facil: 'Fácil', normal: 'Normal', dificil: 'Difícil',
 }
@@ -125,6 +134,7 @@ export default function PartidaPool() {
   const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
   const [nivelAsistencia, setNivelAsistencia] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
   const [anguloSugerido, setAnguloSugerido] = useState<number | null>(null)
+  const [timbaFinal, setTimbaFinal] = useState<TimbaFinal | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [anchoMesa, setAnchoMesa] = useState(0)
   const [sonido, setSonido] = useState(true)
@@ -273,6 +283,26 @@ export default function PartidaPool() {
       .subscribe()
     return () => { activo = false; supabase.removeChannel(canal) }
   }, [esOnline, partidaId])
+
+  // Timba pre-comprometida (spec: se resuelve sola al terminar, sin "Crear
+  // Timba" después — ver cerrar_timba_juego, migración 021). Se dispara la
+  // RPC una vez que la partida queda en un estado terminal; es idempotente
+  // (no hace nada si ya se resolvió), así que no importa si los dos
+  // clientes la llaman a la vez.
+  const timbaRpcLlamadaRef = useRef(false)
+  useEffect(() => {
+    if (!esOnline || !fila?.timba_id) return
+    if (fila.fase !== 'terminada' && fila.fase !== 'abandonada') return
+    if (timbaRpcLlamadaRef.current) return
+    timbaRpcLlamadaRef.current = true
+    supabase.rpc('cerrar_timba_juego', { p_partida_id: fila.id }).then(() => {
+      supabase.from('timbas')
+        .select('tipo, premio_descripcion, prenda_descripcion, monto_minimo, estado, resultado_ganador')
+        .eq('id', fila.timba_id)
+        .single()
+        .then(({ data }) => { if (data) setTimbaFinal(data as TimbaFinal) })
+    })
+  }, [esOnline, fila?.fase, fila?.timba_id, fila?.id])
 
   // nombre del rival
   useEffect(() => {
@@ -751,27 +781,6 @@ export default function PartidaPool() {
     nuevaPartida(rompe.current)
   }
 
-  // Integración Timba (spec §15): al terminar online, sugerir —no auto-resolver—
-  // una Timba con las opciones precargadas. El creador la resuelve después,
-  // como cualquier Timba (modelo de confianza). Solo online: apostar contra un
-  // bot no tiene sentido (anti-ludopatía, ver [[feedback-anti-ludopatia]]).
-  // Fase 9 (§4.3): manda el id de esta partida — nueva.tsx, si lo recibe,
-  // guarda el vínculo (partidas_pool.timba_id) después de crearla, para que
-  // el detalle de la Timba pueda sugerir el resultado en vez de que el
-  // creador tenga que acordarse quién ganó.
-  function crearTimbaResultado() {
-    const yo = usuario?.nombre || 'Vos'
-    router.replace({
-      pathname: '/timba/nueva',
-      params: {
-        tituloPreset: `Pool: ${yo} vs ${nombreRival}`,
-        opcionesPreset: `Gana ${yo},Gana ${nombreRival}`,
-        opcionesBloqueadas: 'true',
-        poolPartidaId: partidaId,
-      },
-    } as any)
-  }
-
   // ── gestos sobre la mesa ──
   const tf = anchoMesa > 0 ? crearTransform(anchoMesa) : null
 
@@ -830,6 +839,21 @@ export default function PartidaPool() {
 
   const ganeSerie = esOnline && fila?.ganador_serie != null && fila.ganador_serie === miAsiento
   const ganeJuegoBot = estado?.ganador === HUMANO
+
+  // Mensaje de la timba pre-comprometida (spec): premio/prenda/plata según
+  // corresponda — se resolvió sola, no hay nada que proponer ni confirmar.
+  const mensajeTimba = (() => {
+    if (!timbaFinal) return null
+    if (timbaFinal.estado === 'cancelada') return 'La timba se canceló (desconexión): nadie debe nada.'
+    if (timbaFinal.estado !== 'cerrada') return null
+    if (timbaFinal.tipo === 'monetaria') {
+      return ganeSerie ? `Ahora te deben $${timbaFinal.monto_minimo}` : `Ahora debés $${timbaFinal.monto_minimo}`
+    }
+    if (ganeSerie) {
+      return timbaFinal.premio_descripcion ? `Tu premio es: ${timbaFinal.premio_descripcion}` : null
+    }
+    return timbaFinal.prenda_descripcion ? `Tu prenda es: ${timbaFinal.prenda_descripcion}` : null
+  })()
 
   return (
     <View style={[es.contenedor, { backgroundColor: c.fondo }]}>
@@ -1096,12 +1120,16 @@ export default function PartidaPool() {
         </View>
       )}
 
-      {/* overlay: fin (online) */}
+      {/* overlay: fin (online) — si había timba, ya se resolvió sola
+          (cerrar_timba_juego): acá solo se comunica el resultado, no hay
+          nada para proponer ni confirmar. */}
       {esOnline && (fila?.fase === 'terminada' || fila?.fase === 'abandonada') && (
         <View style={es.overlay}>
           <View style={[es.cartaFin, { backgroundColor: c.fondoCard, borderColor: ganeSerie ? c.primario : c.borde }]}>
             <Text style={[es.finTitulo, { color: ganeSerie ? c.primario : c.texto }]}>
-              {ganeSerie ? '¡Ganaste! 🎱' : `Ganó ${nombreRival}`}
+              {timbaFinal?.estado === 'cancelada'
+                ? 'Partida cancelada'
+                : ganeSerie ? 'Has ganado 🎱' : 'Has perdido'}
             </Text>
             <Text style={[es.finDetalle, { color: c.textoSuave }]}>
               {fila.fase === 'abandonada'
@@ -1110,12 +1138,14 @@ export default function PartidaPool() {
                   ? `Serie ${miAsiento === 'host' ? `${fila.victorias_host}–${fila.victorias_invitado}` : `${fila.victorias_invitado}–${fila.victorias_host}`}.`
                   : ganeSerie ? 'Embocaste la 8.' : 'Se llevó la 8.'}
             </Text>
+            {mensajeTimba && (
+              <Text style={[es.finDetalle, { color: c.primario, fontWeight: '800', fontSize: 16 }]}>
+                {mensajeTimba}
+              </Text>
+            )}
             <View style={es.finBotones}>
-              <TouchableOpacity style={[es.botonSec, { borderColor: c.borde }]} onPress={() => router.back()} activeOpacity={0.8}>
-                <Text style={[es.botonSecTexto, { color: c.textoSuave }]}>Salir</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[es.botonPri, { backgroundColor: c.primario }]} onPress={crearTimbaResultado} activeOpacity={0.8}>
-                <Text style={[es.botonPriTexto, { color: c.fondo }]}>Crear Timba</Text>
+              <TouchableOpacity style={[es.botonPri, { backgroundColor: c.primario }]} onPress={() => router.back()} activeOpacity={0.8}>
+                <Text style={[es.botonPriTexto, { color: c.fondo }]}>Salir</Text>
               </TouchableOpacity>
             </View>
           </View>

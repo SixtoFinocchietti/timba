@@ -1,11 +1,12 @@
 // Sala de espera del Pool online (patrón sala-blackjack.tsx):
-// ambos anuncian presencia en un canal; el host ve cuando el invitado se une
-// y arranca la partida (INSERT en partidas_pool); el invitado escucha ese
-// INSERT filtrado por su id y navega solo.
+// ambos anuncian presencia en un canal; cuando los dos marcan "Listo" la
+// partida arranca sola (feedback de juego real, jul 2026 — antes solo el
+// host tenía un botón "Empezar partida" y no había forma de que el
+// invitado viera las reglas de la timba/partida antes de comprometerse).
 
-import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator } from 'react-native'
+import { View, Text, StyleSheet, TouchableOpacity, ActivityIndicator, Alert } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useRef } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
 import { useColores } from '@/lib/ThemeContext'
@@ -15,6 +16,15 @@ import { estadoInicialOnline } from '@/lib/pool/online'
 
 function nuevaSeed(): number {
   return (Date.now() ^ (Math.random() * 0x7fffffff)) | 0
+}
+
+interface TimbaResumen {
+  id: string
+  tipo: 'amistosa' | 'monetaria'
+  opciones: string[]
+  premio_descripcion: string | null
+  prenda_descripcion: string | null
+  monto_minimo: number | null
 }
 
 export default function SalaPool() {
@@ -28,6 +38,7 @@ export default function SalaPool() {
     serie: string
     timer: string
     modo_sala: string
+    timbaId?: string
   }>()
 
   const amigoNombre = params.amigo ?? 'Amigo'
@@ -36,19 +47,34 @@ export default function SalaPool() {
     ? (parseInt(params.timer ?? '45', 10) as 0 | 30 | 45 | 60)
     : 45
   const esInvitado = params.modo_sala === 'invitado'
+  const tuNombre = usuario?.nombre ?? 'Vos'
 
   const [amigoUnido, setAmigoUnido] = useState(esInvitado)
+  const [yoListo, setYoListo] = useState(false)
+  const [amigoListo, setAmigoListo] = useState(false)
   const [creando, setCreando] = useState(false)
   const [reenviando, setReenviando] = useState(false)
   const [conexionInestable, setConexionInestable] = useState(false)
+  const [timba, setTimba] = useState<TimbaResumen | null>(null)
+  const [saliendo, setSaliendo] = useState(false)
+
+  const canalRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
+  const empezandoRef = useRef(false) // evita disparar empezarPartida() dos veces
 
   const subtitulo = `${serie === 3 ? 'Mejor de 3' : 'Partida suelta'} · ${timer === 0 ? 'Sin límite de tiempo' : `${timer}s por tiro`}`
 
-  // Historial de desconexiones (spec §8.3, auditoría técnica jul 2026):
-  // informar, no castigar — solo un indicador cualitativo, sin número
-  // público, visible acá porque es justo el momento en que importa (antes
-  // de arrancar a jugar). RLS de eventos_desconexion ya limita esto a
-  // amigos, así que si no hay datos visibles simplemente no se muestra nada.
+  // Timba vinculada (si la invitación traía una) — reglas visibles antes de
+  // arrancar (spec: "en la sala debe dejarte ver las reglas de la timba").
+  useEffect(() => {
+    if (!params.timbaId) { setTimba(null); return }
+    supabase.from('timbas')
+      .select('id, tipo, opciones, premio_descripcion, prenda_descripcion, monto_minimo')
+      .eq('id', params.timbaId)
+      .single()
+      .then(({ data }) => { if (data) setTimba(data as TimbaResumen) })
+  }, [params.timbaId])
+
+  // Historial de desconexiones (spec §8.3) — mismo criterio que antes
   useEffect(() => {
     if (!params.amigoId) return
     supabase
@@ -58,28 +84,37 @@ export default function SalaPool() {
       .then(({ count }) => setConexionInestable((count ?? 0) >= 3))
   }, [params.amigoId])
 
-  // Presencia: el host detecta cuando el invitado aparece
+  // Presencia + "listo" de ambos — el mismo canal hace de sala de espera y
+  // de mecanismo de cancelación (broadcast 'cancelar').
   useEffect(() => {
     if (!usuario?.id || !params.amigoId) return
     const roomKey = [usuario.id, params.amigoId].sort().join('_')
     const canal = supabase.channel(`sala-pool-${roomKey}`)
+    canalRef.current = canal
 
     canal
       .on('presence', { event: 'sync' }, () => {
-        if (esInvitado) return
-        const state = canal.presenceState<{ rol: string }>()
-        const hayInvitado = Object.values(state).some(ps =>
-          (ps as any[]).some((p: { rol: string }) => p.rol === 'invitado')
-        )
-        if (hayInvitado) setAmigoUnido(true)
+        const state = canal.presenceState<{ rol: string; listo: boolean }>()
+        const otros = Object.values(state).flatMap(ps =>
+          (ps as any[]).filter((p: { rol: string }) => p.rol === (esInvitado ? 'host' : 'invitado')))
+        setAmigoUnido(otros.length > 0)
+        setAmigoListo(otros.some((p: any) => p.listo))
+      })
+      .on('broadcast', { event: 'cancelar' }, ({ payload }) => {
+        // Si soy el host y había una timba vinculada, la cancelo yo (solo el
+        // creador puede, por RLS) — sin importar quién apretó "Cancelar".
+        if (!esInvitado && timba) {
+          supabase.from('timbas').update({ estado: 'cancelada' }).eq('id', timba.id).eq('estado', 'activa')
+        }
+        Alert.alert('Partida cancelada', `${payload?.por ?? amigoNombre} canceló antes de arrancar.`, [
+          { text: 'OK', onPress: () => router.back() },
+        ])
       })
       .subscribe(async status => {
-        if (status === 'SUBSCRIBED') {
-          await canal.track({ rol: esInvitado ? 'invitado' : 'host' })
-        }
+        if (status === 'SUBSCRIBED') await canal.track({ rol: esInvitado ? 'invitado' : 'host', listo: false })
       })
 
-    return () => { supabase.removeChannel(canal) }
+    return () => { supabase.removeChannel(canal); canalRef.current = null }
   }, [usuario?.id, params.amigoId, esInvitado])
 
   // Invitado: escucha el INSERT en partidas_pool y navega al juego
@@ -100,6 +135,51 @@ export default function SalaPool() {
     return () => { supabase.removeChannel(canal) }
   }, [esInvitado, usuario?.id])
 
+  // Host: cuando ambos están listos, arranca sola (spec: "el juego empieza
+  // solo") — ref para no dispararla dos veces si el efecto vuelve a correr.
+  useEffect(() => {
+    if (esInvitado || !yoListo || !amigoListo || empezandoRef.current) return
+    empezandoRef.current = true
+    empezarPartida()
+  }, [esInvitado, yoListo, amigoListo])
+
+  async function marcarListo() {
+    if (!usuario?.id || yoListo) return
+    // voto automático por mí mismo (spec: "ambos jugadores votan por sí
+    // mismos") — cada uno inserta el suyo, RLS no deja insertar el ajeno
+    if (timba) {
+      await supabase.from('participantes').upsert(
+        {
+          timba_id: timba.id,
+          usuario_id: usuario.id,
+          opcion_elegida: `Gana ${tuNombre}`,
+          monto: timba.tipo === 'monetaria' ? timba.monto_minimo : null,
+        },
+        { onConflict: 'timba_id,usuario_id' },
+      )
+    }
+    setYoListo(true)
+    await canalRef.current?.track({ rol: esInvitado ? 'invitado' : 'host', listo: true })
+  }
+
+  async function cancelarJuego() {
+    Alert.alert('Cancelar partida', '¿Seguro? Se cierra la sala para los dos.', [
+      { text: 'Seguir acá', style: 'cancel' },
+      {
+        text: 'Cancelar partida',
+        style: 'destructive',
+        onPress: async () => {
+          setSaliendo(true)
+          await canalRef.current?.send({ type: 'broadcast', event: 'cancelar', payload: { por: tuNombre } })
+          if (!esInvitado && timba) {
+            await supabase.from('timbas').update({ estado: 'cancelada' }).eq('id', timba.id).eq('estado', 'activa')
+          }
+          router.back()
+        },
+      },
+    ])
+  }
+
   async function reenviarInvitacion() {
     if (!usuario?.id || !params.amigoId || reenviando) return
     setReenviando(true)
@@ -108,6 +188,7 @@ export default function SalaPool() {
       timer,
       hostId: usuario.id,
       hostNombre: usuario?.nombre ?? '',
+      timbaId: params.timbaId ?? null,
     })
     await supabase.from('mensajes').insert({
       emisor_id: usuario.id,
@@ -127,19 +208,21 @@ export default function SalaPool() {
       .insert({
         host_id: usuario.id,
         invitado_id: params.amigoId,
+        timba_id: params.timbaId ?? null,
         ...config,
       })
       .select('id')
       .single()
     setCreando(false)
-    if (error || !data) return
+    if (error || !data) { empezandoRef.current = false; return }
     router.replace({
       pathname: '/juegos/partida-pool',
       params: { modo: 'online', partidaId: data.id },
     } as any)
   }
 
-  const tuNombre = usuario?.nombre ?? 'Vos'
+  const opcionGanador = timba?.opciones.find(o => o.includes(tuNombre))
+  const opcionRival = timba?.opciones.find(o => o.includes(amigoNombre))
 
   return (
     <View style={[es.contenedor, { backgroundColor: c.fondo }]}>
@@ -153,24 +236,24 @@ export default function SalaPool() {
       <Text style={[es.subtitulo, { color: c.textoSuave }]}>{subtitulo}</Text>
 
       <View style={es.centro}>
-        <AppIcon name="pool" size={56} color={c.primario} />
+        <AppIcon name="pool" size={48} color={c.primario} />
 
         <View style={es.jugadores}>
-          <View style={[es.jugador, { backgroundColor: c.fondoCard, borderColor: c.primario }]}>
+          <View style={[es.jugador, { backgroundColor: c.fondoCard, borderColor: yoListo ? c.exito : c.primario }]}>
             <Text style={[es.jugadorInicial, { color: c.primario }]}>{tuNombre.charAt(0).toUpperCase()}</Text>
             <Text style={[es.jugadorNombre, { color: c.texto }]} numberOfLines={1}>{tuNombre}</Text>
-            <Text style={[es.jugadorEstado, { color: c.exito }]}>listo</Text>
+            <Text style={[es.jugadorEstado, { color: yoListo ? c.exito : c.textoSuave }]}>{yoListo ? 'listo' : 'esperando'}</Text>
           </View>
           <Text style={[es.vs, { color: c.textoSuave }]}>VS</Text>
-          <View style={[es.jugador, { backgroundColor: c.fondoCard, borderColor: amigoUnido ? c.primario : c.borde }]}>
+          <View style={[es.jugador, { backgroundColor: c.fondoCard, borderColor: amigoListo ? c.exito : amigoUnido ? c.primario : c.borde }]}>
             <Text style={[es.jugadorInicial, { color: amigoUnido ? c.primario : c.textoSuave }]}>
               {amigoNombre.charAt(0).toUpperCase()}
             </Text>
             <Text style={[es.jugadorNombre, { color: c.texto }]} numberOfLines={1}>{amigoNombre}</Text>
-            {amigoUnido ? (
-              <Text style={[es.jugadorEstado, { color: c.exito }]}>en la sala</Text>
-            ) : (
+            {!amigoUnido ? (
               <ActivityIndicator size="small" color={c.textoSuave} />
+            ) : (
+              <Text style={[es.jugadorEstado, { color: amigoListo ? c.exito : c.textoSuave }]}>{amigoListo ? 'listo' : 'en la sala'}</Text>
             )}
           </View>
         </View>
@@ -181,22 +264,40 @@ export default function SalaPool() {
           </Text>
         )}
 
-        {esInvitado ? (
+        {timba && (
+          <View style={[es.timbaCard, { backgroundColor: c.fondoCard, borderColor: c.primario }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <AppIcon name="timba" size={16} color={c.primario} />
+              <Text style={[es.timbaTitulo, { color: c.primario }]}>Timba de esta partida</Text>
+            </View>
+            {timba.tipo === 'monetaria' ? (
+              <Text style={[es.timbaDetalle, { color: c.texto }]}>
+                El que pierde le debe ${timba.monto_minimo} al que gana.
+              </Text>
+            ) : (
+              <>
+                {timba.premio_descripcion && (
+                  <Text style={[es.timbaDetalle, { color: c.texto }]}>🏆 Premio: {timba.premio_descripcion}</Text>
+                )}
+                {timba.prenda_descripcion && (
+                  <Text style={[es.timbaDetalle, { color: c.texto }]}>💀 Prenda: {timba.prenda_descripcion}</Text>
+                )}
+                {!timba.premio_descripcion && !timba.prenda_descripcion && (
+                  <Text style={[es.timbaDetalle, { color: c.textoSuave }]}>Sin premio ni prenda cargados — solo por orgullo.</Text>
+                )}
+              </>
+            )}
+            <Text style={[es.timbaAviso, { color: c.textoSuave }]}>
+              Se resuelve sola al terminar la partida, sin que nadie tenga que proponerlo.
+            </Text>
+          </View>
+        )}
+
+        {esInvitado && !amigoUnido ? (
           <Text style={[es.esperando, { color: c.textoSuave }]}>
             Esperando a que {amigoNombre} empiece la partida…
           </Text>
-        ) : amigoUnido ? (
-          <TouchableOpacity
-            style={[es.botonPrincipal, { backgroundColor: c.primario }]}
-            onPress={empezarPartida}
-            activeOpacity={0.85}
-            disabled={creando}
-          >
-            {creando
-              ? <ActivityIndicator color={c.fondo} />
-              : <Text style={[es.botonPrincipalTexto, { color: c.fondo }]}>Empezar partida</Text>}
-          </TouchableOpacity>
-        ) : (
+        ) : !amigoUnido ? (
           <>
             <Text style={[es.esperando, { color: c.textoSuave }]}>
               Esperando a que {amigoNombre} acepte la invitación…
@@ -212,6 +313,32 @@ export default function SalaPool() {
               </Text>
             </TouchableOpacity>
           </>
+        ) : creando ? (
+          <ActivityIndicator color={c.primario} />
+        ) : (
+          <View style={{ gap: 12, width: '100%', alignItems: 'center' }}>
+            {!yoListo ? (
+              <TouchableOpacity
+                style={[es.botonPrincipal, { backgroundColor: c.primario }]}
+                onPress={marcarListo}
+                activeOpacity={0.85}
+              >
+                <Text style={[es.botonPrincipalTexto, { color: c.fondo }]}>Listo</Text>
+              </TouchableOpacity>
+            ) : (
+              <Text style={[es.esperando, { color: c.textoSuave }]}>
+                Esperando a que {amigoNombre} también esté listo…
+              </Text>
+            )}
+            <TouchableOpacity
+              style={[es.botonCancelar, { borderColor: c.error }]}
+              onPress={cancelarJuego}
+              activeOpacity={0.8}
+              disabled={saliendo}
+            >
+              <Text style={[es.botonCancelarTexto, { color: c.error }]}>Cancelar juego</Text>
+            </TouchableOpacity>
+          </View>
         )}
       </View>
     </View>
@@ -228,7 +355,7 @@ function makeEstilos(c: ColoresTema) {
     volver: { fontSize: 26, fontWeight: '700', width: 18 },
     tituloHeader: { fontSize: 18, fontWeight: '800' },
     subtitulo: { fontSize: 13, textAlign: 'center', marginTop: 2 },
-    centro: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 28, paddingHorizontal: 24 },
+    centro: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, paddingHorizontal: 24, paddingVertical: 16 },
     jugadores: { flexDirection: 'row', alignItems: 'center', gap: 14 },
     jugador: {
       width: 120, borderWidth: 1.5, borderRadius: 18,
@@ -239,6 +366,10 @@ function makeEstilos(c: ColoresTema) {
     jugadorEstado: { fontSize: 11, fontWeight: '700' },
     vs: { fontSize: 14, fontWeight: '800' },
     avisoConexion: { fontSize: 12, fontWeight: '600', textAlign: 'center', paddingHorizontal: 12 },
+    timbaCard: { width: '100%', borderWidth: 1.5, borderRadius: 16, padding: 14, gap: 6 },
+    timbaTitulo: { fontSize: 13, fontWeight: '800' },
+    timbaDetalle: { fontSize: 14, fontWeight: '600' },
+    timbaAviso: { fontSize: 11, marginTop: 4, lineHeight: 15 },
     esperando: { fontSize: 13, textAlign: 'center' },
     botonPrincipal: {
       borderRadius: 16, paddingVertical: 16, paddingHorizontal: 48,
@@ -247,5 +378,7 @@ function makeEstilos(c: ColoresTema) {
     botonPrincipalTexto: { fontSize: 16, fontWeight: '800' },
     botonSecundario: { borderWidth: 1, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 20 },
     botonSecundarioTexto: { fontSize: 13, fontWeight: '700' },
+    botonCancelar: { borderWidth: 1.5, borderRadius: 12, paddingVertical: 10, paddingHorizontal: 20 },
+    botonCancelarTexto: { fontSize: 13, fontWeight: '800' },
   })
 }

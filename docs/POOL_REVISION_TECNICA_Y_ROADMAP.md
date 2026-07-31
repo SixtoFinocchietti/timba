@@ -889,14 +889,8 @@ Hallazgo real al correr los tests: dos tests viejos apuntaban al centro exacto d
 
 Ícono nuevo `ajustes` agregado a `AppIcon.tsx` (no existía ninguno de tipo "configuración/engranaje" en el catálogo).
 
-### Fase 9 — Multijugador robusto + Timbas — ✅ hecha (9.5 no aplica, ver nota)
+### Fase 9 — Multijugador robusto + Timbas — ✅ hecha (9.1–9.3, 9.6)
 *Impacto: alto (afecta dinero/apuestas entre amigos). Dificultad: alta. Dependencias: ninguna técnica.*
-
-Antes de implementar se confirmaron dos decisiones con el usuario (`AskUserQuestion`):
-**9.4 en alcance reducido** (solo el banner de resultado sugerido, sin el botón "Jugar ahora"
-desde una Timba existente — ese necesitaría una columna `juego` en `timbas` que no existe hoy,
-más superficie de cambio de la que se justificaba ahora) y **9.2 se implementa igual**, con el
-usuario probando la sincronización online con un amigo (yo no puedo verificarla solo).
 
 Migración aplicada en vivo (proyecto `emesunjuzgfenpsltnkg`, `020_pool_fase9_multijugador_timbas.sql`)
 y verificada contra el esquema real vía MCP de Supabase — el `schema.sql` local estaba
@@ -909,9 +903,46 @@ completa, confirmar contra `list_tables` antes de escribir una migración nueva.
 | ✅ 9.1 Migración: `motivo_abandono` + `timba_id` en `partidas_pool` | Baja | Aditivo, aplicado y verificado con `get_advisors` (sin lints nuevos) |
 | ✅ 9.2 Gracia en dos niveles (§8.2) | Alta | `reclamarTurnoPorAusencia()` nueva — mismo patrón de update guardado server-side que `reclamarVictoria()`, dispara desde el timer del jugador QUE ESPERA en vez de depender del cliente ausente. `GRACIA_RECLAMO_MS` 90s→5min |
 | ✅ 9.3 Confirmación al presionar "Rendirse" | Baja | `confirmarAbandonar()` con `Alert.alert`, avisa explícitamente si pierde una serie en curso |
-| ✅ 9.4 (reducido) Vínculo `timba_id` + banner de resultado sugerido | Media | `crearTimbaResultado()` manda `poolPartidaId` → `nueva.tsx` escribe el vínculo → `[id].tsx` sugiere el ganador reutilizando el modal de proponer resultado que ya existía (nunca auto-resuelve) |
-| ⚠️ 9.5 Auto-cancelación de Timba en desconexión sostenida | — | **No implementable en el alcance reducido**: `timba_id` solo se asigna DESPUÉS de que la partida ya terminó (fase `terminada`/`abandonada`) — nunca existe una partida `en_juego` con una Timba vinculada que cancelar. El estado `'cancelada'` ya quedó en el esquema (aditivo, sin costo) para cuando/si se construya el flujo completo de 9.4 |
 | ✅ 9.6 Historial de desconexiones + indicador cualitativo | Media | Tabla `eventos_desconexion` (RLS: visible a amigos, insert solo sobre el rival de una partida propia ya marcada `abandonada`/`desconexion` — no se puede marcar a cualquiera). Badge en `sala-pool.tsx`, sin número visible |
+
+9.4 y 9.5 se implementaron en una segunda pasada con alcance distinto al que estaba acá — ver
+Fase 9-bis inmediatamente abajo, que reemplaza lo que decía esta sección sobre esos dos puntos.
+
+### Fase 9-bis — Timba pre-comprometida y auto-resolución — ✅ hecha
+*Impacto: muy alto (cambia el modelo de confianza para este caso puntual). Dificultad: alta.*
+
+Rediseño completo pedido después de probar la Fase 9 original en la práctica: el usuario notó
+que crear la Timba **después** de jugar (como quedó diseñado en la primera pasada, con el banner
+de "resultado sugerido") permite que dos amigos jueguen una partida casual y el que gana recién
+ahí decida armar una Timba — sabiendo ya el resultado. La solución: comprometer la Timba **antes**
+de arrancar, con reglas visibles para ambos, y resolverla sola cuando el partido termina.
+
+**Por qué esto no rompe el principio anti-ludopatía** (`[[feedback-anti-ludopatia]]`: nunca
+auto-resolver un ganador con implicancia de apuesta) — se confirmó explícitamente con el usuario
+antes de tocar código: acá el resultado sale del propio motor del juego (quién embocó la 8 con
+la mesa limpia), no es una afirmación que alguien pueda inflar o mentir — muy distinto de una
+Timba genérica ("quién llega primero a casa") donde sí hace falta que alguien proponga y otro
+confirme porque el software no puede verificar la verdad por su cuenta. **El modelo general de
+Timbas no cambió**: esto es una excepción acotada y verificable, solo para Timbas creadas desde
+este flujo de Pool (exactamente 2 participantes, opciones bloqueadas a "Gana X"/"Gana Y",
+vinculadas 1 a 1 a una `partidas_pool`).
+
+Antes de implementar se confirmaron 2 decisiones con el usuario (`AskUserQuestion`): si la
+partida termina por **desconexión** sostenida la Timba se **cancela** (nadie debe nada — distinto
+de una rendición voluntaria, que sí resuelve con un ganador real); y para timbas con plata, el
+monto es **uno solo que fija el creador**, igual para los dos jugadores (no un monto por
+jugador — mantiene el flujo simple).
+
+| Subtarea | Dificultad | Nota |
+|---|---|---|
+| ✅ RPC `cerrar_timba_juego(p_partida_id)` (migración `021_pool_timba_auto_resolucion.sql`) | Alta | `SECURITY DEFINER`, idempotente (no hace nada si `timbas.estado` ya no es `'activa'`) — necesaria porque `deudas` no tiene policy de INSERT para usuarios comunes, y `timbas_update` solo deja escribir al creador (acá cualquiera de los 2 jugadores tiene que poder disparar la resolución) |
+| ✅ Crear la Timba ANTES de invitar, en `pool-online.tsx` | Alta | Sección nueva "Timba (opcional)": tipo + premio/prenda o monto único — sin el formulario avanzado de `nueva.tsx` (cupos, fechas), sin mostrar las opciones (ya se sabe cuáles son: "Gana vos"/"Gana el amigo") |
+| ✅ La invitación (mensaje de chat + card) avisa "🎲 Con timba" | Media | `timbaId` viaja en el `contenido` del mensaje `invitacion_pool` |
+| ✅ Sala: reglas de la timba + config visibles, "Listo" mutuo, arranque automático | Alta | Presence trackea `{rol, listo}`; cuando ambos están listos el host dispara `empezarPartida()` solo (antes había un botón manual). "Cancelar juego": broadcast en el mismo canal, cierra la sala para los dos y cancela la timba si la había (el host la cancela sin importar quién apretó el botón, porque solo el creador puede por RLS) |
+| ✅ Auto-voto de cada jugador por sí mismo | Media | Al tocar "Listo", cada cliente hace upsert de SU PROPIO `participantes` (RLS exige `auth.uid() = usuario_id` — no se puede votar por el otro) |
+| ✅ `cerrar_timba_juego` se dispara solo al terminar la partida | Media | Efecto en `partida-pool.tsx` sobre `fila.fase`/`fila.timba_id`, guardado con un ref para no llamarlo dos veces por cliente — igual es idempotente si los dos clientes lo llaman a la vez |
+| ✅ Overlay de fin con premio/prenda/plata | Media | "Has ganado"/"Has perdido" + "Tu premio es: X" / "Tu prenda es: X" / "Ahora te deben \$X" / "Ahora debés \$X" — ya no hay botón "Crear Timba" (se movió a antes de jugar) |
+| ✅ Limpieza | Baja | Se sacó `crearTimbaResultado()` de `partida-pool.tsx` y el parámetro `poolPartidaId` de `nueva.tsx` (quedaban sin uso con el nuevo flujo). El banner de "resultado sugerido" de la Fase 9 original (`app/timba/[id].tsx`) se dejó intacto como respaldo manual para el caso raro de que `cerrar_timba_juego` nunca llegue a dispararse (los dos cierran la app antes) |
 
 ### Fase 10 — Contenido y configuración (mayor impacto en percepción de pulido)
 *Impacto: medio-alto. Dificultad: media. Dependencias: ninguna técnica.*

@@ -6,7 +6,7 @@
 import { useState, useEffect } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal,
-  TextInput, FlatList, ActivityIndicator, Pressable,
+  TextInput, FlatList, ActivityIndicator, Pressable, Alert,
 } from 'react-native'
 import { router } from 'expo-router'
 import { supabase } from '@/lib/supabase'
@@ -14,6 +14,7 @@ import { useAuthStore } from '@/store/authStore'
 import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
+import { TimbaTipo } from '@/types'
 
 type SerieVal = 1 | 3
 type TimerVal = 0 | 30 | 45 | 60
@@ -26,6 +27,18 @@ type InvPool = {
   contenido: string
   created_at: string
   emisorNombre: string
+}
+
+// Timba pre-comprometida antes de jugar (feedback de juego real, jul 2026):
+// antes se creaba DESPUÉS de terminar el partido, lo que permitía que el
+// ganador "recién decida" armarla porque ganó. Ahora se crea acá, con las
+// mismas opciones bloqueadas de siempre ("Gana {vos}"/"Gana {amigo}") y se
+// resuelve sola al terminar (ver cerrar_timba_juego, migración 021) — sin
+// el formulario avanzado de una Timba genérica: acá solo importa el tipo y
+// el premio/prenda/monto, nada de cupos ni fechas.
+function generarCodigo(): string {
+  const chars = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'
+  return Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
 
 export default function PoolOnlineConfig() {
@@ -41,6 +54,13 @@ export default function PoolOnlineConfig() {
   const [amigos, setAmigos] = useState<Amigo[]>([])
   const [cargando, setCargando] = useState(false)
   const [invitaciones, setInvitaciones] = useState<InvPool[]>([])
+
+  // Timba opcional (ver nota arriba)
+  const [conTimba, setConTimba] = useState(false)
+  const [timbaTipo, setTimbaTipo] = useState<TimbaTipo>('amistosa')
+  const [timbaPremio, setTimbaPremio] = useState('')
+  const [timbaPrenda, setTimbaPrenda] = useState('')
+  const [timbaMonto, setTimbaMonto] = useState('')
 
   useEffect(() => {
     if (!usuario?.id) return
@@ -113,12 +133,42 @@ export default function PoolOnlineConfig() {
 
   async function invitar(amigo: Amigo) {
     if (!usuario?.id) return
+
+    // Timba (opcional): se crea ANTES de invitar, no después de jugar — así
+    // ninguno de los dos sabe el resultado todavía cuando se fijan las
+    // condiciones. Validación mínima, a propósito (esto es entre amigos).
+    let timbaId: string | null = null
+    if (conTimba) {
+      if (timbaTipo === 'monetaria') {
+        const monto = parseFloat(timbaMonto.replace(',', '.'))
+        if (isNaN(monto) || monto <= 0) { Alert.alert('Poné un monto válido para la timba (mayor a 0)'); return }
+      }
+      const { data: timba, error } = await supabase.from('timbas').insert({
+        creador_id: usuario.id,
+        titulo: `Pool: ${usuario.nombre ?? 'Vos'} vs ${amigo.nombre}`,
+        tipo: timbaTipo,
+        opciones: [`Gana ${usuario.nombre ?? 'Vos'}`, `Gana ${amigo.nombre}`],
+        estado: 'activa',
+        codigo_invitacion: generarCodigo(),
+        premio_descripcion: timbaTipo === 'amistosa' ? (timbaPremio.trim() || null) : null,
+        prenda_descripcion: timbaTipo === 'amistosa' ? (timbaPrenda.trim() || null) : null,
+        monto_minimo: timbaTipo === 'monetaria' ? parseFloat(timbaMonto.replace(',', '.')) : null,
+        monto_maximo: timbaTipo === 'monetaria' ? parseFloat(timbaMonto.replace(',', '.')) : null,
+      }).select('id').single()
+      if (error || !timba) { Alert.alert('No se pudo crear la timba', error?.message ?? ''); return }
+      timbaId = timba.id
+      // el creador queda anotado como participante — todavía sin votar: el
+      // voto automático por sí mismo pasa recién al tocar "Listo" en la sala
+      await supabase.from('participantes').insert({ timba_id: timbaId, usuario_id: usuario.id, opcion_elegida: null })
+    }
+
     setSheetVisible(false)
     const contenido = JSON.stringify({
       serie,
       timer,
       hostId: usuario.id,
       hostNombre: usuario.nombre ?? '',
+      timbaId,
     })
     await supabase.from('mensajes').insert({
       emisor_id: usuario.id,
@@ -134,12 +184,13 @@ export default function PoolOnlineConfig() {
         serie: String(serie),
         timer: String(timer),
         modo_sala: 'host',
+        ...(timbaId ? { timbaId } : {}),
       },
     } as any)
   }
 
   function unirse(inv: InvPool) {
-    let cfg = { serie: 1, timer: 45, hostId: inv.emisor_id, hostNombre: inv.emisorNombre }
+    let cfg = { serie: 1, timer: 45, hostId: inv.emisor_id, hostNombre: inv.emisorNombre, timbaId: null as string | null }
     try { Object.assign(cfg, JSON.parse(inv.contenido)) } catch {}
     router.push({
       pathname: '/juegos/sala-pool',
@@ -149,6 +200,7 @@ export default function PoolOnlineConfig() {
         serie: String(cfg.serie),
         timer: String(cfg.timer),
         modo_sala: 'invitado',
+        ...(cfg.timbaId ? { timbaId: cfg.timbaId } : {}),
       },
     } as any)
   }
@@ -171,7 +223,7 @@ export default function PoolOnlineConfig() {
         <View style={es.seccion}>
           <Text style={[es.seccionTitulo, { color: c.textoSuave }]}>TE INVITARON</Text>
           {invitaciones.map(inv => {
-            let cfg = { serie: 1, timer: 45 }
+            let cfg = { serie: 1, timer: 45, timbaId: null as string | null }
             try { Object.assign(cfg, JSON.parse(inv.contenido)) } catch {}
             return (
               <View key={inv.id} style={[es.cardInv, { backgroundColor: c.fondoCard, borderColor: c.primario }]}>
@@ -181,6 +233,9 @@ export default function PoolOnlineConfig() {
                   <Text style={[es.invDetalle, { color: c.textoSuave }]}>
                     {cfg.serie === 3 ? 'Mejor de 3' : 'Partida suelta'} · {cfg.timer === 0 ? 'sin límite' : `${cfg.timer}s por tiro`}
                   </Text>
+                  {cfg.timbaId && (
+                    <Text style={[es.invDetalle, { color: c.primario, fontWeight: '700' }]}>🎲 Con timba</Text>
+                  )}
                 </View>
                 <TouchableOpacity
                   style={[es.botonUnirse, { backgroundColor: c.primario }]}
@@ -230,6 +285,80 @@ export default function PoolOnlineConfig() {
             </TouchableOpacity>
           ))}
         </View>
+      </View>
+
+      <View style={es.seccion}>
+        <Text style={[es.seccionTitulo, { color: c.textoSuave }]}>TIMBA (OPCIONAL)</Text>
+        <View style={es.filaOpciones}>
+          <TouchableOpacity
+            style={[es.opcion, { backgroundColor: c.fondoCard, borderColor: !conTimba ? c.primario : c.borde }]}
+            onPress={() => setConTimba(false)}
+            activeOpacity={0.8}
+          >
+            <Text style={[es.opcionTexto, { color: !conTimba ? c.primario : c.textoSuave }]}>Solo jugar</Text>
+          </TouchableOpacity>
+          <TouchableOpacity
+            style={[es.opcion, { backgroundColor: c.fondoCard, borderColor: conTimba ? c.primario : c.borde }]}
+            onPress={() => setConTimba(true)}
+            activeOpacity={0.8}
+          >
+            <Text style={[es.opcionTexto, { color: conTimba ? c.primario : c.textoSuave }]}>Con timba</Text>
+          </TouchableOpacity>
+        </View>
+
+        {conTimba && (
+          <View style={[es.timbaCard, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+            <View style={es.filaOpciones}>
+              <TouchableOpacity
+                style={[es.opcionChica, { backgroundColor: c.fondoInput, borderColor: timbaTipo === 'amistosa' ? c.primario : c.borde }]}
+                onPress={() => setTimbaTipo('amistosa')}
+                activeOpacity={0.8}
+              >
+                <Text style={[es.opcionTexto, { color: timbaTipo === 'amistosa' ? c.primario : c.textoSuave, fontSize: 13 }]}>Amistosa</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                style={[es.opcionChica, { backgroundColor: c.fondoInput, borderColor: timbaTipo === 'monetaria' ? c.primario : c.borde }]}
+                onPress={() => setTimbaTipo('monetaria')}
+                activeOpacity={0.8}
+              >
+                <Text style={[es.opcionTexto, { color: timbaTipo === 'monetaria' ? c.primario : c.textoSuave, fontSize: 13 }]}>Con plata</Text>
+              </TouchableOpacity>
+            </View>
+
+            {timbaTipo === 'amistosa' ? (
+              <View style={{ gap: 8, marginTop: 10 }}>
+                <TextInput
+                  style={[es.timbaInput, { backgroundColor: c.fondoInput, color: c.texto, borderColor: c.borde }]}
+                  placeholder="Premio del ganador (opcional)"
+                  placeholderTextColor={c.textoSuave}
+                  value={timbaPremio}
+                  onChangeText={setTimbaPremio}
+                />
+                <TextInput
+                  style={[es.timbaInput, { backgroundColor: c.fondoInput, color: c.texto, borderColor: c.borde }]}
+                  placeholder="Prenda del perdedor (opcional)"
+                  placeholderTextColor={c.textoSuave}
+                  value={timbaPrenda}
+                  onChangeText={setTimbaPrenda}
+                />
+              </View>
+            ) : (
+              <View style={{ marginTop: 10 }}>
+                <TextInput
+                  style={[es.timbaInput, { backgroundColor: c.fondoInput, color: c.texto, borderColor: c.borde }]}
+                  placeholder="Monto por jugador ($)"
+                  placeholderTextColor={c.textoSuave}
+                  value={timbaMonto}
+                  onChangeText={setTimbaMonto}
+                  keyboardType="numeric"
+                />
+              </View>
+            )}
+            <Text style={[es.timbaAviso, { color: c.textoSuave }]}>
+              Al terminar la partida, la timba se resuelve sola con el resultado del juego.
+            </Text>
+          </View>
+        )}
       </View>
 
       <TouchableOpacity
@@ -310,6 +439,9 @@ function makeEstilos(c: ColoresTema) {
       paddingVertical: 12, alignItems: 'center',
     },
     opcionTexto: { fontSize: 14, fontWeight: '800' },
+    timbaCard: { borderWidth: 1, borderRadius: 14, padding: 14, marginTop: 4 },
+    timbaInput: { borderWidth: 1, borderRadius: 10, paddingHorizontal: 12, paddingVertical: 10, fontSize: 14 },
+    timbaAviso: { fontSize: 11, marginTop: 10, lineHeight: 15 },
     botonInvitar: {
       flexDirection: 'row', alignItems: 'center', justifyContent: 'center', gap: 10,
       marginHorizontal: 24, marginTop: 28, borderRadius: 16, paddingVertical: 16,

@@ -1443,7 +1443,7 @@ function BurbujaMensaje({ m, mio, hora, myId, seleccionado, modoSeleccion, onPre
             })()}
 
             {m.tipo === 'invitacion_pool' && (() => {
-              let cfg = { serie: 1, timer: 45, hostId: '', hostNombre: '' }
+              let cfg = { serie: 1, timer: 45, hostId: '', hostNombre: '', timbaId: null as string | null }
               try { Object.assign(cfg, JSON.parse(m.contenido ?? '{}')) } catch {}
               const resumen = `${cfg.serie === 3 ? 'Mejor de 3' : 'Partida suelta'} · ${cfg.timer === 0 ? 'Sin límite' : `${cfg.timer}s por tiro`}`
               return (
@@ -1456,6 +1456,11 @@ function BurbujaMensaje({ m, mio, hora, myId, seleccionado, modoSeleccion, onPre
                     <Text style={{ color: mio ? c.primarioSuave : c.textoSuave, fontSize: 12 }} numberOfLines={1}>
                       {resumen}
                     </Text>
+                    {cfg.timbaId && (
+                      <Text style={{ color: mio ? c.fondo : c.primario, fontWeight: '700', fontSize: 12 }} numberOfLines={1}>
+                        🎲 Con timba
+                      </Text>
+                    )}
                   </View>
                   {!mio && (
                     <TouchableOpacity
@@ -1471,6 +1476,7 @@ function BurbujaMensaje({ m, mio, hora, myId, seleccionado, modoSeleccion, onPre
                           serie: String(cfg.serie),
                           timer: String(cfg.timer),
                           modo_sala: 'invitado',
+                          ...(cfg.timbaId ? { timbaId: cfg.timbaId } : {}),
                         },
                       } as any)}
                       activeOpacity={0.8}
