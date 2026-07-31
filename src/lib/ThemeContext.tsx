@@ -9,7 +9,11 @@ export function useColores(): ColoresTema {
 }
 
 export function ThemeProvider({ children }: { children: React.ReactNode }) {
-  // Para reactivar modo claro: descomentar las 2 líneas de abajo y eliminar la de coloresOscuro
+  // Modo claro/oscuro: el modo claro estuvo activo en la app, pero al Jefe del
+  // proyecto no lo convenció y se decidió ocultar la opción (no borrar el
+  // trabajo) hasta que se retome en el futuro — toggleTema, cargarTema y
+  // coloresClaros siguen intactos en temaStore.ts/colores.ts.
+  // Para reactivar: descomentar las 2 líneas de abajo y eliminar la de coloresOscuro
   // const { tema } = useTemaStore()
   // const colores = tema === 'claro' ? coloresClaros : coloresOscuro
   const colores = coloresOscuro

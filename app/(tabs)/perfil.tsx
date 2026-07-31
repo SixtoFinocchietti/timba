@@ -359,7 +359,7 @@ export default function Perfil() {
           <View style={[es.linea, { backgroundColor: c.texto }]} />
         </TouchableOpacity>
         <Text style={[es.tituloPag, { color: c.texto }]}>Perfil</Text>
-        {/* Para reactivar modo claro: descomentar este botón */}
+        {/* Modo claro oculto a pedido del Jefe del proyecto (ver ThemeContext.tsx) — descomentar para reactivar */}
         {/* <TouchableOpacity
           onPress={cambiarTema}
           style={[es.btnTema, { backgroundColor: c.fondoCard, borderColor: c.borde }]}
