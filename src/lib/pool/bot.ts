@@ -90,7 +90,7 @@ function conBlancaEn(bolas: Bola[], pos: Vec2): Bola[] {
 
 // ─── Generador + evaluador ───────────────────────────────────────────────────
 
-interface Candidato {
+export interface Candidato {
   bola: number
   tronera: Tronera
   angulo: number // dirección blanca → ghost ball
@@ -99,7 +99,11 @@ interface Candidato {
   dificultadTiro: number // 0 fácil .. 1 límite (escala el ruido)
 }
 
-function generarCandidatos(bolas: Bola[], objetivos: number[]): Candidato[] {
+// Exportada para la sugerencia de práctica libre (spec §3, auditoría técnica
+// jul 2026): es el mismo generador que ya usa decidirTiro() acá abajo, solo
+// que sin ejecutor de ruido — devuelve la lista ordenada de mejor a peor,
+// candidatos[0] es "la mejor jugada" tal como la vería el bot.
+export function generarCandidatos(bolas: Bola[], objetivos: number[]): Candidato[] {
   const blanca = bolas.find(b => b.n === 0 && b.viva)
   if (!blanca) return []
   const candidatos: Candidato[] = []

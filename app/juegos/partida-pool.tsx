@@ -27,11 +27,12 @@ import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
 import SelectorSkins from '@/components/pool/SelectorSkins'
 import { useSonidoPool } from '@/lib/pool/sonido'
 import { haptica } from '@/lib/pool/haptica'
-import { CLAVE_TACO_SKIN, TACO_DEFAULT, TACOS, TacoSkinId } from '@/lib/pool/skins'
+import { CLAVE_TACO_SKIN, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
+import { CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NivelAsistencia } from '@/lib/pool/asistencia'
 import {
   CABECERA_Y, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
 } from '@/lib/pool/fisica'
-import { Dificultad, decidirTiro } from '@/lib/pool/bot'
+import { Dificultad, decidirTiro, generarCandidatos } from '@/lib/pool/bot'
 import {
   AsientoPool, PartidaPoolFila, asientoDe, avanzarSerie, bolasDeSnapshot, jugadorDe,
 } from '@/lib/pool/online'
@@ -64,15 +65,6 @@ const COLORES_RIEL: Record<number, string> = {
   1: '#F0B428', 2: '#1E5AA8', 3: '#C93430', 4: '#5B3E8F',
   5: '#E07B28', 6: '#1F7A4D', 7: '#8A3038', 8: '#161616',
 }
-
-// opciones del selector de taco: TACOS (skins.ts) es solo metadata, el
-// preview (require) tiene que ser un literal estático acá
-const IMAGENES_TACO: Record<TacoSkinId, any> = {
-  oscuro: require('../../assets/pool-assets/palo_pool_1.png'),
-  claro: require('../../assets/pool-assets/palo_pool_2.png'),
-  premium: require('../../assets/pool-assets/palo_pool.png'),
-}
-const OPCIONES_TACO = TACOS.map(t => ({ id: t.id, nombre: t.nombre, preview: IMAGENES_TACO[t.id] }))
 
 function nuevaSeed(): number {
   return (Date.now() ^ (Math.random() * 0x7fffffff)) | 0
@@ -125,6 +117,8 @@ export default function PartidaPool() {
   const [spinAbierto, setSpinAbierto] = useState(false)
   const [skinsAbierto, setSkinsAbierto] = useState(false)
   const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
+  const [nivelAsistencia, setNivelAsistencia] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
+  const [anguloSugerido, setAnguloSugerido] = useState<number | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [anchoMesa, setAnchoMesa] = useState(0)
   const [sonido, setSonido] = useState(true)
@@ -136,6 +130,7 @@ export default function PartidaPool() {
   const rafRef = useRef<number | null>(null)
   const botTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const sugerenciaTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const modoDrag = useRef<'apuntar' | 'mover'>('apuntar')
   const fuerzaRef = useRef(0)
   const rompe = useRef<Jugador>(HUMANO)
@@ -164,18 +159,34 @@ export default function PartidaPool() {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
     if (botTimer.current) clearTimeout(botTimer.current)
     if (msgTimer.current) clearTimeout(msgTimer.current)
+    if (sugerenciaTimer.current) clearTimeout(sugerenciaTimer.current)
   }, [])
 
   useEffect(() => {
     AsyncStorage.getItem('@timba:pool_sonido').then(v => { if (v === '0') setSonido(false) })
     AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
-      if (v && TACOS.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+      if (v && OPCIONES_TACO.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+    })
+    AsyncStorage.getItem(CLAVE_NIVEL_ASISTENCIA).then(v => {
+      if (v === 'sin' || v === 'baja' || v === 'normal' || v === 'maxima') setNivelAsistencia(v)
     })
   }, [])
 
   function elegirTacoSkin(id: string) {
     setTacoSkin(id as TacoSkinId)
     AsyncStorage.setItem(CLAVE_TACO_SKIN, id)
+  }
+
+  // sugerencia del bot en práctica libre (spec §3): mesa abierta, sin
+  // estado de reglas — "objetivos" son todas las bolas vivas salvo la
+  // blanca, igual a como bolasObjetivoDe() resuelve una mesa abierta.
+  function sugerirTiro() {
+    if (sugerenciaTimer.current) clearTimeout(sugerenciaTimer.current)
+    const objetivos = bolasRef.current.filter(b => b.viva && b.n !== 0).map(b => b.n)
+    const candidatos = generarCandidatos(bolasRef.current, objetivos)
+    if (candidatos.length === 0) { avisar('No hay ningún tiro viable ahora mismo'); return }
+    setAnguloSugerido(candidatos[0].angulo)
+    sugerenciaTimer.current = setTimeout(() => setAnguloSugerido(null), 3000)
   }
 
   function toggleSonido() {
@@ -689,6 +700,8 @@ export default function PartidaPool() {
     .runOnJS(true)
     .onBegin(e => {
       if (!tf) return
+      if (sugerenciaTimer.current) clearTimeout(sugerenciaTimer.current)
+      setAnguloSugerido(null) // el primer drag propio limpia la sugerencia (spec §3)
       const m = tf.aMesa(e.x, e.y)
       const blanca = bolasRef.current.find(b => b.n === 0)
       modoDrag.current =
@@ -847,7 +860,10 @@ export default function PartidaPool() {
                   muestra={muestra}
                   angulo={angulo}
                   fuerzaPreview={fuerza}
+                  efectoLateral={spin.a}
                   mostrarGuia={!animando && turnoMio}
+                  nivelAsistencia={nivelAsistencia}
+                  anguloSugerido={anguloSugerido}
                   bolaEnMano={bolaEnMano}
                   longitudGuiaObjetivo={esBot && dificultad === 'facil' ? 40 : 6}
                   tacoSkin={tacoSkin}
@@ -913,6 +929,17 @@ export default function PartidaPool() {
             <Text style={{ fontSize: 16 }}>🎨</Text>
             <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Taco</Text>
           </TouchableOpacity>
+          {!esBot && !esOnline && (
+            <TouchableOpacity
+              style={[es.botonSpin, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+              onPress={sugerirTiro}
+              activeOpacity={0.8}
+              disabled={!controlesActivos}
+            >
+              <Text style={{ fontSize: 16 }}>💡</Text>
+              <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Sugerencia</Text>
+            </TouchableOpacity>
+          )}
         </View>
 
         {puedeReclamar ? (

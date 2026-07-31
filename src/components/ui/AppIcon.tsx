@@ -10,7 +10,7 @@ export type IconName =
   | 'limite' | 'cupo'
   | 'amistosa' | 'conPlata'
   | 'vacioTodoDia' | 'sinDeudas' | 'recordatorio' | 'compartir' | 'yaPague' | 'pagoPendiente'
-  | 'subirImagen' | 'galeria' | 'machoEspada' | 'poker' | 'pool'
+  | 'subirImagen' | 'galeria' | 'machoEspada' | 'poker' | 'pool' | 'ajustes'
 
 interface AppIconProps {
   name: IconName
@@ -375,6 +375,19 @@ export function AppIcon({ name, size = 24, color = '#C9A84C' }: AppIconProps) {
           <Line x1="13.1" y1="13.6" x2="13.1" y2="17.9" stroke={color} strokeWidth={1.5} strokeLinecap={lc} />
           <Path d="M10.9 15.1h2.2M10.9 16.5h2.2" stroke={color} strokeWidth={1.5} strokeLinecap={lc} strokeLinejoin={lj} />
           <Circle cx="12" cy="18.9" r="1.05" stroke={color} strokeWidth={1.5} />
+        </Svg>
+      )
+
+    // ── Sliders (ajustes/configuración) ─────────────────────────────────────
+    case 'ajustes':
+      return (
+        <Svg width={size} height={size} viewBox="0 0 24 24" fill="none">
+          <Line x1="4" y1="7" x2="20" y2="7" stroke={color} strokeWidth={sw} strokeLinecap={lc} />
+          <Circle cx="9" cy="7" r="2" fill={color} />
+          <Line x1="4" y1="12" x2="20" y2="12" stroke={color} strokeWidth={sw} strokeLinecap={lc} />
+          <Circle cx="16" cy="12" r="2" fill={color} />
+          <Line x1="4" y1="17" x2="20" y2="17" stroke={color} strokeWidth={sw} strokeLinecap={lc} />
+          <Circle cx="12" cy="17" r="2" fill={color} />
         </Svg>
       )
 

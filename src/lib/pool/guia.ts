@@ -4,15 +4,29 @@
 // de la blanca. La UI la dibuja; el bot la reutiliza para chequear líneas
 // libres — su firma no cambió, sigue siendo compatible con esos usos.
 //
-// calcularTrayectoriaGuia() la extiende con rebotes en banda (auditoría
-// técnica, jul 2026): si el primer impacto es una banda, refleja la
-// dirección geométricamente — sin fricción ni spin, es una ayuda visual
-// aproximada, no una predicción física exacta — y sigue el rayo desde ahí,
-// hasta agotar los rebotes o el alcance configurados. Un tramo post-rebote
-// solo se agrega si de verdad hay algo (bola u otra banda) dentro del
-// alcance restante; si no, la guía simplemente no continúa.
+// calcularTrayectoriaGuia() la extiende con rebotes en banda. Bug real de
+// auditoría (jul 2026): la primera versión reflejaba el ángulo de forma
+// ESPECULAR (como un espejo) — pero la banda real (rebotarPared, fisica.ts)
+// no rebota así: la componente normal se frena con restBanda y la tangencial
+// con fricBanda/englishBanda, factores DISTINTOS, así que ni siquiera un
+// rebote sin efecto sale a un ángulo espejado (error sistemático, chico pero
+// real en todos los rebotes). Con efecto lateral el error es mucho más
+// grande: el english (wz) tuerce la tangencial vía vpt = vt − wz·R, y la
+// guía vieja no sabía nada de eso. reflejarEnBanda() replica exactamente el
+// mismo modelo normal/tangencial (ver docs/POOL_REVISION_TECNICA_Y_ROADMAP.md
+// §1) trabajando sobre un vector unitario en vez de una velocidad real —
+// sigue siendo una aproximación (el wz se trata como CONSTANTE en el
+// trayecto, sin decaimientoWz — decir "va a curvar para este lado, más o
+// menos así" alcanza para una guía, no hace falta simular tiro por tiro) —
+// y ya no es sistemáticamente incorrecta como la versión anterior.
+//
+// Un tramo post-rebote solo se agrega si de verdad hay algo (bola u otra
+// banda) dentro del alcance restante; si no, la guía simplemente no
+// continúa. Tampoco se agrega si el impacto cae en la boca de una tronera
+// (enBoca, fisica.ts): ahí no hay pared real, la bola real cae o la escupe
+// un poste — dibujar un rebote ahí sería mostrar algo que no va a pasar.
 
-import { PARAMETROS, limitesJuego } from './fisica'
+import { enBoca, PARAMETROS, limitesJuego } from './fisica'
 import { Bola, Vec2 } from './tipos'
 
 const R = PARAMETROS.radioBola
@@ -102,10 +116,41 @@ function datosImpactoBola(d: Vec2, impacto: Vec2, objetivo: Bola): { dirObjetivo
 
 const ALCANCE_TOTAL_DEFAULT = 6 // unidades de mesa (~2.7x el largo de la mesa)
 
+// Refleja `d` (dirección UNITARIA) contra una banda de normal `normal`,
+// replicando el modelo normal/tangencial real de rebotarPared() (fisica.ts)
+// — NO una reflexión especular. `wz` es el english que tendría la blanca al
+// llegar a la banda (0 = sin efecto). Devuelve un vector unitario: el
+// raycast de esta guía (primerImpacto/restante) asume que `d` siempre tiene
+// magnitud 1, así que hay que renormalizar tras la reflexión.
+function reflejarEnBanda(d: Vec2, normal: Vec2, wz: number): Vec2 {
+  const tx = -normal.y
+  const ty = normal.x
+  const vn = d.x * normal.x + d.y * normal.y
+  let vt = d.x * tx + d.y * ty
+  const vpt = vt - wz * R
+  vt -= PARAMETROS.fricBanda * vpt * PARAMETROS.englishBanda
+  vt -= PARAMETROS.fricBanda * vt * (1 - PARAMETROS.englishBanda)
+  const vnNuevo = -PARAMETROS.restBanda * vn
+  const dx = vnNuevo * normal.x + vt * tx
+  const dy = vnNuevo * normal.y + vt * ty
+  const mag = Math.hypot(dx, dy) || 1
+  return { x: dx / mag, y: dy / mag }
+}
+
+// wz que tendría la blanca según el efecto lateral elegido — misma fórmula
+// que aplicarTiro() (fisica.ts), sin necesidad de simular. El efecto
+// VERTICAL (draw/follow) no entra acá: solo mueve wx/wy, no wz — no afecta
+// el ángulo de salida en banda.
+function wzInicial(fuerza: number, efectoLateral: number): number {
+  const a = Math.max(-1, Math.min(1, efectoLateral))
+  const V = Math.max(0.05, Math.min(1, fuerza)) * PARAMETROS.velMaxTaco
+  return ((2.5 * a) / R) * V * PARAMETROS.factorEnglish
+}
+
 export function calcularTrayectoriaGuia(
   bolas: Bola[],
   angulo: number,
-  opts?: { maxRebotes?: number; alcanceTotal?: number },
+  opts?: { maxRebotes?: number; alcanceTotal?: number; efectoLateral?: number; fuerza?: number },
 ): TrayectoriaGuia | null {
   const blanca = bolas.find(b => b.n === 0 && b.viva)
   if (!blanca) return null
@@ -120,6 +165,7 @@ export function calcularTrayectoriaGuia(
   let bolaObjetivo: number | null = null
   let dirObjetivo: Vec2 | null = null
   let dirBlanca: Vec2 | null = null
+  let wz = wzInicial(opts?.fuerza ?? 0, opts?.efectoLateral ?? 0)
 
   while (restante > 0) {
     const esPrimerTramo = segmentos.length === 0
@@ -146,11 +192,12 @@ export function calcularTrayectoriaGuia(
       break // el raycast termina al tocar una bola
     }
 
-    if (rebotes >= maxRebotes || !imp.normal) break
+    // dentro de la boca de una tronera no hay pared real: no seguir
+    // dibujando un rebote que en la mesa real no va a pasar.
+    if (rebotes >= maxRebotes || !imp.normal || enBoca(imp.punto)) break
     rebotes++
-    // reflexión geométrica de la dirección respecto a la normal de la banda
-    const dot = d.x * imp.normal.x + d.y * imp.normal.y
-    d = { x: d.x - 2 * dot * imp.normal.x, y: d.y - 2 * dot * imp.normal.y }
+    d = reflejarEnBanda(d, imp.normal, wz)
+    wz *= 1 - PARAMETROS.absorcionWzBanda // mismo consumo por rebote que la física real
     origen = imp.punto
   }
 
