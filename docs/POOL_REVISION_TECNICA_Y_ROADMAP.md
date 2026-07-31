@@ -294,9 +294,12 @@ la práctica libre no tiene noción de "objetivos" porque no corre `reglas.ts` (
   recalcula en cada frame ni se queda pegada mientras el jugador mueve el dedo — eso sería
   invasivo y además confundiría con la guía propia del jugador.
 - **Cómo representarla**: reusar el mismo renderer de segmentos de `MesaPool.tsx` pero con un
-  color distinto (ej. celeste, para no confundirse con la guía dorada/blanca propia) y que se
-  desvanece a los ~3s o al primer drag del jugador — es una sugerencia puntual, no un overlay
-  permanente.
+  color distinto (ej. celeste, para no confundirse con la guía dorada/blanca propia). **Decidido
+  tras probarlo en dispositivo real** (feedback de juego, jul 2026): la sugerencia queda dibujada
+  hasta que se tira o se pide otra — no se desvanece sola ni se limpia al primer drag. La primera
+  versión hacía eso pensando que era "menos invasivo", pero el jugador la quiere de referencia
+  fija mientras alinea su propio apuntado contra ella — borrarla justo al empezar a arrastrar
+  arruinaba el caso de uso real.
 - **Costo real**: `generarCandidatos` no simula nada pesado (solo raycasts vía `calcularGuia`);
   el ranking con `valorPosicional` si se quiere la versión "buena" (mirando qué queda después,
   no solo el tiro más fácil) corre `simularTiro(..., {sinMuestras:true})` para los 3-4 mejores

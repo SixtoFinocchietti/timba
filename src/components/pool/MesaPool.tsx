@@ -373,8 +373,11 @@ export default function MesaPool({
       })()}
 
       {/* sugerencia del bot en práctica libre (spec §3): mismo tipo de línea
-          que la guía propia pero en celeste, para no confundirse — puntual,
-          la limpia el padre (partida-pool.tsx) al ratito o al primer drag. */}
+          que la guía propia pero en celeste, para no confundirse — queda
+          dibujada hasta que se tira (o se pide otra), a propósito: el
+          jugador la usa de referencia para alinear su propio apuntado
+          (feedback de juego real, jul 2026) — el padre (partida-pool.tsx)
+          la limpia recién en ejecutarTiro()/nuevaPartida(). */}
       {trayectoriaSugerida && trayectoriaSugerida.segmentos.length > 0 && (
         <Group>
           {trayectoriaSugerida.segmentos.map((seg, i) => (

@@ -128,7 +128,6 @@ export default function PartidaPool() {
   const rafRef = useRef<number | null>(null)
   const botTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const msgTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const sugerenciaTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
   const modoDrag = useRef<'apuntar' | 'mover'>('apuntar')
   const fuerzaRef = useRef(0)
   const rompe = useRef<Jugador>(HUMANO)
@@ -157,7 +156,6 @@ export default function PartidaPool() {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
     if (botTimer.current) clearTimeout(botTimer.current)
     if (msgTimer.current) clearTimeout(msgTimer.current)
-    if (sugerenciaTimer.current) clearTimeout(sugerenciaTimer.current)
   }, [])
 
   useEffect(() => {
@@ -173,13 +171,14 @@ export default function PartidaPool() {
   // sugerencia del bot en práctica libre (spec §3): mesa abierta, sin
   // estado de reglas — "objetivos" son todas las bolas vivas salvo la
   // blanca, igual a como bolasObjetivoDe() resuelve una mesa abierta.
+  // Queda dibujada hasta que se tira (o se pide otra) — feedback de juego
+  // real: el jugador la quiere de referencia mientras alinea su propio
+  // apuntado, no como un flash que desaparece apenas empieza a arrastrar.
   function sugerirTiro() {
-    if (sugerenciaTimer.current) clearTimeout(sugerenciaTimer.current)
     const objetivos = bolasRef.current.filter(b => b.viva && b.n !== 0).map(b => b.n)
     const candidatos = generarCandidatos(bolasRef.current, objetivos)
     if (candidatos.length === 0) { avisar('No hay ningún tiro viable ahora mismo'); return }
     setAnguloSugerido(candidatos[0].angulo)
-    sugerenciaTimer.current = setTimeout(() => setAnguloSugerido(null), 3000)
   }
 
   function toggleSonido() {
@@ -332,6 +331,7 @@ export default function PartidaPool() {
     setPensando(false)
     setSpin({ a: 0, b: 0 })
     setFuerza(0)
+    setAnguloSugerido(null) // rack nuevo invalida cualquier sugerencia sobre la mesa anterior
     setBolaEnManoPractica(false)
     setAngulo(Math.PI / 2)
     const rack = crearRack(nuevaSeed())
@@ -369,6 +369,7 @@ export default function PartidaPool() {
     setSpin({ a: 0, b: 0 })
     setFuerza(0)
     fuerzaRef.current = 0
+    setAnguloSugerido(null) // la sugerencia queda hasta que se tira (spec §3)
     animar(res, () => {
       if (esOnline) procesarOnline(res, t)
       else if (esBot) procesarReglas(res)
@@ -693,8 +694,6 @@ export default function PartidaPool() {
     .runOnJS(true)
     .onBegin(e => {
       if (!tf) return
-      if (sugerenciaTimer.current) clearTimeout(sugerenciaTimer.current)
-      setAnguloSugerido(null) // el primer drag propio limpia la sugerencia (spec §3)
       const m = tf.aMesa(e.x, e.y)
       const blanca = bolasRef.current.find(b => b.n === 0)
       modoDrag.current =
