@@ -53,7 +53,14 @@ export default function NuevaTimba() {
   const { usuario, session } = useAuthStore()
   const c = useColores()
   const es = makeEstilos(c)
-  const params = useLocalSearchParams<{ tituloPreset?: string; opcionesPreset?: string; opcionesBloqueadas?: string }>()
+  const params = useLocalSearchParams<{
+    tituloPreset?: string; opcionesPreset?: string; opcionesBloqueadas?: string
+    // Fase 9 (auditoría técnica jul 2026, §4.3): si esta Timba se crea desde
+    // el resultado de una partida (hoy solo Pool la manda), guarda el
+    // vínculo de vuelta para que el detalle de la Timba pueda sugerir el
+    // resultado en vez de que el creador tenga que acordarse quién ganó.
+    poolPartidaId?: string
+  }>()
 
   const opcionesBloqueadas = params.opcionesBloqueadas === 'true'
   const opcionesIniciales = params.opcionesPreset ? params.opcionesPreset.split(',') : ['', '']
@@ -149,6 +156,14 @@ export default function NuevaTimba() {
     if (selectError || !data) { Alert.alert('Error al cargar la timba', selectError?.message ?? 'Sin datos'); setCargando(false); return }
 
     await supabase.from('participantes').insert({ timba_id: data.id, usuario_id: userId, opcion_elegida: null })
+
+    // Fase 9 (§4.3): vincular de vuelta con la partida que originó esta Timba,
+    // si vino de una (hoy solo Pool). No es crítico si falla — la Timba ya
+    // se creó bien — así que no bloquea la navegación.
+    if (params.poolPartidaId) {
+      await supabase.from('partidas_pool').update({ timba_id: data.id }).eq('id', params.poolPartidaId)
+    }
+
     setCargando(false)
     router.replace(`/timba/${data.id}`)
   }

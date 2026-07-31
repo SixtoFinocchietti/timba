@@ -13,7 +13,7 @@
 // sin revancha automática al terminar la serie (se re-invita).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native'
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
@@ -43,7 +43,15 @@ import { crearTransform, RELACION_ASPECTO, SENSIBILIDAD_APUNTADO } from '@/lib/p
 import { Bola, MuestraAnimacion, ResultadoSimulacion, Tiro } from '@/lib/pool/tipos'
 
 const AJUSTE_FINO = (0.25 * Math.PI) / 180
-const GRACIA_RECLAMO_MS = 90_000 // inactividad del rival para reclamar la victoria
+// Fase 9 (auditoría técnica jul 2026): gracia en DOS niveles, no una sola.
+// Nivel 1 (corto): el rival está ausente Y ya venció su propio timer de tiro
+// — se le pasa el turno (falta simple, sigue en la partida). Nivel 2 (largo):
+// ausencia sostenida — recién ahí termina la partida. Antes solo existía el
+// nivel 2 en 90s: si el desconectado era justo el que tenía el turno, su
+// timer de "30s por tiro" nunca se disparaba (corre en SU cliente, que no
+// corre en background) — el rival esperaba igual los 90s completos.
+const MARGEN_TURNO_AUSENTE_MS = 15_000 // sobre el timer_seg de la partida
+const GRACIA_RECLAMO_MS = 300_000 // 5 min de ausencia sostenida = termina la partida
 
 const HUMANO: Jugador = 'A' // en bot: humano=A, bot=B; en online: host=A
 const BOT: Jugador = 'B'
@@ -144,6 +152,8 @@ export default function PartidaPool() {
   filaRef.current = fila
   const animandoRef = useRef(false)
   animandoRef.current = animando
+  const rivalPresenteRef = useRef(true)
+  rivalPresenteRef.current = rivalPresente
   const pendienteRef = useRef<PartidaPoolFila | null>(null) // update remoto llegado durante animación
 
   // online: mi asiento y mi jugador de reglas
@@ -301,6 +311,11 @@ export default function PartidaPool() {
         if (s <= 1) {
           clearInterval(iv)
           if (estadoRef.current?.turno === miJugador) vencioMiTimer()
+          // gracia nivel 1 (Fase 9): es el turno del rival, ya venció SU
+          // timer y encima está ausente — probablemente su cliente nunca va
+          // a disparar vencioMiTimer() solo. Chequeo server-side con margen
+          // real dentro de reclamarTurnoPorAusencia(), esto es solo el gatillo.
+          else if (!rivalPresenteRef.current) reclamarTurnoPorAusencia()
           return 0
         }
         return s - 1
@@ -614,6 +629,43 @@ export default function PartidaPool() {
     })
   }
 
+  // ── ONLINE: gracia nivel 1 — el rival está ausente y ya venció SU timer;
+  // le paso el turno sin terminar la partida (Fase 9, spec §8.2). Reutiliza
+  // resolverTimeout tal cual usa vencioMiTimer — solo cambia quién lo dispara.
+  async function reclamarTurnoPorAusencia() {
+    const f = filaRef.current
+    const previo = estadoRef.current
+    if (!f || !previo || previo.fase === 'fin' || previo.turno === miJugador) return
+    const limiteMs = f.timer_seg * 1000 + MARGEN_TURNO_AUSENTE_MS
+    const limite = new Date(Date.now() - limiteMs).toISOString()
+    const e2 = resolverTimeout(previo)
+    const num = numTiroRef.current + 1
+    let finales = bolasRef.current
+    if (e2.bolaEnMano) finales = reponerBlanca(finales, e2.soloCabecera)
+    // garantía server-side (mismo patrón que reclamarVictoria): solo procede
+    // si de verdad pasó el margen sobre el mismo tiro — si el rival tiró
+    // justo mientras tanto, num_tiro ya cambió y esto no pisa nada.
+    const { data } = await supabase.from('partidas_pool')
+      .update({
+        estado_juego: e2,
+        estado_bolas: finales.map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, viva: b.viva })),
+        ultimo_tiro: null,
+        num_tiro: num,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', f.id)
+      .eq('fase', 'en_juego')
+      .eq('num_tiro', f.num_tiro)
+      .lt('updated_at', limite)
+      .select('id')
+    if (data && data.length > 0) {
+      numTiroRef.current = num
+      setEstado(e2)
+      setBolas(finales)
+      avisar(`${nombreRival} no respondió a tiempo: bola en mano para vos`)
+    }
+  }
+
   // ── ONLINE: abandonar / reclamar por inactividad ──
   async function abandonar() {
     const f = filaRef.current
@@ -622,10 +674,29 @@ export default function PartidaPool() {
       .update({
         fase: 'abandonada',
         ganador_serie: miAsiento === 'host' ? 'invitado' : 'host',
+        motivo_abandono: 'voluntario',
         updated_at: new Date().toISOString(),
       })
       .eq('id', f.id)
     router.back()
+  }
+
+  function confirmarAbandonar() {
+    const f = filaRef.current
+    const enSerie = !!f && f.serie_max > 1 && (f.victorias_host > 0 || f.victorias_invitado > 0)
+    const marcador = f && miAsiento
+      ? (miAsiento === 'host' ? `${f.victorias_host}-${f.victorias_invitado}` : `${f.victorias_invitado}-${f.victorias_host}`)
+      : ''
+    Alert.alert(
+      'Rendirse',
+      enSerie
+        ? `Vas ${marcador} en la serie — rendirte ahora pierde la serie completa, no solo este juego. ¿Confirmás?`
+        : '¿Seguro que querés abandonar la partida? El rival gana automáticamente.',
+      [
+        { text: 'Seguir jugando', style: 'cancel' },
+        { text: 'Rendirse', style: 'destructive', onPress: abandonar },
+      ],
+    )
   }
 
   async function reclamarVictoria() {
@@ -634,12 +705,22 @@ export default function PartidaPool() {
     const limite = new Date(Date.now() - GRACIA_RECLAMO_MS).toISOString()
     // garantía server-side: solo procede si la fila está inactiva de verdad
     const { data } = await supabase.from('partidas_pool')
-      .update({ fase: 'abandonada', ganador_serie: miAsiento, updated_at: new Date().toISOString() })
+      .update({
+        fase: 'abandonada',
+        ganador_serie: miAsiento,
+        motivo_abandono: 'desconexion',
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', f.id)
       .eq('fase', 'en_juego')
       .lt('updated_at', limite)
       .select('id')
-    if (!data || data.length === 0) avisar('Todavía no pasó el tiempo de gracia')
+    if (!data || data.length === 0) { avisar('Todavía no pasó el tiempo de gracia'); return }
+
+    // historial de desconexiones (spec §8.3): informar, no castigar — cuenta
+    // solo desconexiones reales, nunca rendiciones voluntarias
+    const rivalId = miAsiento === 'host' ? f.invitado_id : f.host_id
+    await supabase.from('eventos_desconexion').insert({ usuario_id: rivalId, juego: 'pool', partida_id: f.id })
   }
 
   const puedeReclamar = esOnline && fila && estado && fila.fase === 'en_juego' &&
@@ -674,6 +755,10 @@ export default function PartidaPool() {
   // una Timba con las opciones precargadas. El creador la resuelve después,
   // como cualquier Timba (modelo de confianza). Solo online: apostar contra un
   // bot no tiene sentido (anti-ludopatía, ver [[feedback-anti-ludopatia]]).
+  // Fase 9 (§4.3): manda el id de esta partida — nueva.tsx, si lo recibe,
+  // guarda el vínculo (partidas_pool.timba_id) después de crearla, para que
+  // el detalle de la Timba pueda sugerir el resultado en vez de que el
+  // creador tenga que acordarse quién ganó.
   function crearTimbaResultado() {
     const yo = usuario?.nombre || 'Vos'
     router.replace({
@@ -682,6 +767,7 @@ export default function PartidaPool() {
         tituloPreset: `Pool: ${yo} vs ${nombreRival}`,
         opcionesPreset: `Gana ${yo},Gana ${nombreRival}`,
         opcionesBloqueadas: 'true',
+        poolPartidaId: partidaId,
       },
     } as any)
   }
@@ -753,7 +839,7 @@ export default function PartidaPool() {
         </TouchableOpacity>
         <Text style={[es.titulo, { color: c.texto }]}>{titulo}</Text>
         {esOnline && fila?.fase === 'en_juego' ? (
-          <TouchableOpacity style={[es.botonRack, { borderColor: c.borde }]} onPress={abandonar} activeOpacity={0.8}>
+          <TouchableOpacity style={[es.botonRack, { borderColor: c.borde }]} onPress={confirmarAbandonar} activeOpacity={0.8}>
             <Text style={[es.botonRackTexto, { color: c.error }]}>Rendirse</Text>
           </TouchableOpacity>
         ) : esBot || esOnline ? (

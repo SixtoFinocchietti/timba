@@ -40,8 +40,23 @@ export default function SalaPool() {
   const [amigoUnido, setAmigoUnido] = useState(esInvitado)
   const [creando, setCreando] = useState(false)
   const [reenviando, setReenviando] = useState(false)
+  const [conexionInestable, setConexionInestable] = useState(false)
 
   const subtitulo = `${serie === 3 ? 'Mejor de 3' : 'Partida suelta'} · ${timer === 0 ? 'Sin límite de tiempo' : `${timer}s por tiro`}`
+
+  // Historial de desconexiones (spec §8.3, auditoría técnica jul 2026):
+  // informar, no castigar — solo un indicador cualitativo, sin número
+  // público, visible acá porque es justo el momento en que importa (antes
+  // de arrancar a jugar). RLS de eventos_desconexion ya limita esto a
+  // amigos, así que si no hay datos visibles simplemente no se muestra nada.
+  useEffect(() => {
+    if (!params.amigoId) return
+    supabase
+      .from('eventos_desconexion')
+      .select('id', { count: 'exact', head: true })
+      .eq('usuario_id', params.amigoId)
+      .then(({ count }) => setConexionInestable((count ?? 0) >= 3))
+  }, [params.amigoId])
 
   // Presencia: el host detecta cuando el invitado aparece
   useEffect(() => {
@@ -160,6 +175,12 @@ export default function SalaPool() {
           </View>
         </View>
 
+        {conexionInestable && (
+          <Text style={[es.avisoConexion, { color: c.advertencia }]}>
+            ⚠ {amigoNombre} tuvo desconexiones seguidas en partidas recientes
+          </Text>
+        )}
+
         {esInvitado ? (
           <Text style={[es.esperando, { color: c.textoSuave }]}>
             Esperando a que {amigoNombre} empiece la partida…
@@ -217,6 +238,7 @@ function makeEstilos(c: ColoresTema) {
     jugadorNombre: { fontSize: 14, fontWeight: '700', paddingHorizontal: 8 },
     jugadorEstado: { fontSize: 11, fontWeight: '700' },
     vs: { fontSize: 14, fontWeight: '800' },
+    avisoConexion: { fontSize: 12, fontWeight: '600', textAlign: 'center', paddingHorizontal: 12 },
     esperando: { fontSize: 13, textAlign: 'center' },
     botonPrincipal: {
       borderRadius: 16, paddingVertical: 16, paddingHorizontal: 48,

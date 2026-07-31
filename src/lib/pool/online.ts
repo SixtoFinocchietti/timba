@@ -28,6 +28,11 @@ export interface PartidaPoolFila {
   rompe_host: boolean
   timer_seg: number
   ganador_serie: AsientoPool | null
+  // Fase 9 (auditoría técnica jul 2026): distingue "se rindió" de "se le
+  // cortó la conexión" — null hasta que fase pasa a 'abandonada'.
+  motivo_abandono: 'voluntario' | 'desconexion' | null
+  // Timba creada a partir de esta partida (§4.3) — null si no se creó ninguna
+  timba_id: string | null
   updated_at: string
 }
 

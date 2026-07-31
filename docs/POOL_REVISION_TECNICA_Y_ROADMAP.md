@@ -889,21 +889,29 @@ Hallazgo real al correr los tests: dos tests viejos apuntaban al centro exacto d
 
 Ícono nuevo `ajustes` agregado a `AppIcon.tsx` (no existía ninguno de tipo "configuración/engranaje" en el catálogo).
 
-### Fase 9 — Multijugador robusto + Timbas (mismo cambio de esquema, resolver junto)
+### Fase 9 — Multijugador robusto + Timbas — ✅ hecha (9.5 no aplica, ver nota)
 *Impacto: alto (afecta dinero/apuestas entre amigos). Dificultad: alta. Dependencias: ninguna técnica.*
 
-Decisiones ya tomadas (confirmadas por vos): gracia en dos niveles (9.2) e historial de
-desconexiones como tabla compartida entre juegos (9.6, ver matiz de alcance en §8.3 — el esquema
-es genérico desde ya, pero hoy solo Pool tiene datos para alimentarlo).
+Antes de implementar se confirmaron dos decisiones con el usuario (`AskUserQuestion`):
+**9.4 en alcance reducido** (solo el banner de resultado sugerido, sin el botón "Jugar ahora"
+desde una Timba existente — ese necesitaría una columna `juego` en `timbas` que no existe hoy,
+más superficie de cambio de la que se justificaba ahora) y **9.2 se implementa igual**, con el
+usuario probando la sincronización online con un amigo (yo no puedo verificarla solo).
+
+Migración aplicada en vivo (proyecto `emesunjuzgfenpsltnkg`, `020_pool_fase9_multijugador_timbas.sql`)
+y verificada contra el esquema real vía MCP de Supabase — el `schema.sql` local estaba
+desactualizado (le faltaban columnas que ya existían en producción, agregadas en migraciones
+tempranas sin archivo local correspondiente); no asumir que los `.sql` locales son la verdad
+completa, confirmar contra `list_tables` antes de escribir una migración nueva.
 
 | Subtarea | Dificultad | Nota |
 |---|---|---|
-| 9.1 Migración: `motivo_abandono` + `timba_id` en `partidas_pool` | Baja | Aditivo, sin breaking changes |
-| 9.2 Gracia en dos niveles: pasar turno (timer + margen) vs. terminar partida (5 min) (§8.2) | Alta | Toca `resolverTimeout`, `reclamarVictoria`, presencia |
-| 9.3 Confirmación al presionar "Rendirse" (§8.1) | Baja | Diálogo simple |
-| 9.4 Vínculo Timba↔partida (ambos flujos, §4.3) + botón "Jugar ahora" desde el detalle de Timba | Alta | Toca `app/timba/` además de Pool |
-| 9.5 Sumar `'cancelada'` al CHECK de `timbas.estado` (`schema.sql:21`) + auto-cancelación en desconexión sostenida | Media | Depende de 9.1. `resultado_ganador` queda `null`, mismo patrón que `reabrir_timba` |
-| 9.6 Migración `eventos_desconexion(usuario_id, juego, partida_id, creado_en)` (tabla compartida) + indicador cualitativo en Pool | Media | Blackjack/Truco/Poker se suman cuando tengan su propio manejo de presencia — fuera de esta fase |
+| ✅ 9.1 Migración: `motivo_abandono` + `timba_id` en `partidas_pool` | Baja | Aditivo, aplicado y verificado con `get_advisors` (sin lints nuevos) |
+| ✅ 9.2 Gracia en dos niveles (§8.2) | Alta | `reclamarTurnoPorAusencia()` nueva — mismo patrón de update guardado server-side que `reclamarVictoria()`, dispara desde el timer del jugador QUE ESPERA en vez de depender del cliente ausente. `GRACIA_RECLAMO_MS` 90s→5min |
+| ✅ 9.3 Confirmación al presionar "Rendirse" | Baja | `confirmarAbandonar()` con `Alert.alert`, avisa explícitamente si pierde una serie en curso |
+| ✅ 9.4 (reducido) Vínculo `timba_id` + banner de resultado sugerido | Media | `crearTimbaResultado()` manda `poolPartidaId` → `nueva.tsx` escribe el vínculo → `[id].tsx` sugiere el ganador reutilizando el modal de proponer resultado que ya existía (nunca auto-resuelve) |
+| ⚠️ 9.5 Auto-cancelación de Timba en desconexión sostenida | — | **No implementable en el alcance reducido**: `timba_id` solo se asigna DESPUÉS de que la partida ya terminó (fase `terminada`/`abandonada`) — nunca existe una partida `en_juego` con una Timba vinculada que cancelar. El estado `'cancelada'` ya quedó en el esquema (aditivo, sin costo) para cuando/si se construya el flujo completo de 9.4 |
+| ✅ 9.6 Historial de desconexiones + indicador cualitativo | Media | Tabla `eventos_desconexion` (RLS: visible a amigos, insert solo sobre el rival de una partida propia ya marcada `abandonada`/`desconexion` — no se puede marcar a cualquiera). Badge en `sala-pool.tsx`, sin número visible |
 
 ### Fase 10 — Contenido y configuración (mayor impacto en percepción de pulido)
 *Impacto: medio-alto. Dificultad: media. Dependencias: ninguna técnica.*
@@ -952,7 +960,15 @@ claro/oscuro (§5.2 — esa decisión sigue en pie, ya anotada en el código).
    en `src/lib/ThemeContext.tsx` y `app/(tabs)/perfil.tsx` para que no se pierda el contexto.
 5. **Flecha dorada (`dirObjetivo`) y tangente (`dirBlanca`) reservadas para Máxima únicamente**
    (§2.2, opción A) — Baja y Normal muestran solo el camino de la blanca, sin excepciones.
-6. **Fix de `SelectorSpin.tsx` ya aplicado** (§10.5, Fase 12.1): el contenido del Modal quedó
-   envuelto en su propio `GestureHandlerRootView`, con un comentario explicando por qué (para que
-   no se repita el mismo problema si se agrega otro gesto dentro de un Modal en el futuro).
-   Pendiente: confirmarlo jugando en el Samsung real.
+6. **Fix de `SelectorSpin.tsx`**: envuelto en su propio `GestureHandlerRootView` — **confirmado
+   funcionando en el Samsung real** del usuario (jul 2026).
+7. **Barra inferior de la partida reordenada** tras probarla en dispositivo real: se sacó el
+   botón Taco (duplicaba el engranaje de Ajustes de Pool) y "Sugerencia" se movió a una fila
+   propia arriba de la mesa — la barra de abajo no entraba en pantallas angostas con los 4
+   botones + fino juntos.
+8. **La sugerencia del bot queda dibujada hasta que se tira**, no se autoborra a los 3s ni al
+   primer drag — confirmado tras probarlo: el jugador la usa de referencia fija para alinear su
+   propio apuntado, borrarla al empezar a arrastrar arruinaba ese uso.
+9. **Fase 9 — alcance de 9.4 reducido** (solo banner de resultado sugerido, sin "Jugar ahora"
+   desde una Timba existente) y **9.2 se implementa igual**, con el usuario probando la
+   sincronización online con un amigo. Ver detalle en §13, Fase 9.
