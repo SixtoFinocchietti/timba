@@ -141,13 +141,15 @@ export default function PartidaPool() {
   const [sonido, setSonido] = useState(true)
   const [musica, setMusica] = useState(false)
   const [hapticaOn, setHapticaOn] = useState(true)
+  const [volumenSonido, setVolumenSonido] = useState(1)
+  const [volumenMusica, setVolumenMusica] = useState(1)
   const zonaRef = useRef<View>(null)
   const sonidoRef = useRef(true)
   sonidoRef.current = sonido
   const hapticaRef = useRef(true)
   hapticaRef.current = hapticaOn
-  const sfx = useSonidoPool(sonido)
-  const musicaAmbiente = useMusicaPool(musica)
+  const sfx = useSonidoPool(sonido, volumenSonido)
+  const musicaAmbiente = useMusicaPool(musica, volumenMusica)
 
   const rafRef = useRef<number | null>(null)
   const botTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -188,6 +190,8 @@ export default function PartidaPool() {
     AsyncStorage.getItem('@timba:pool_sonido').then(v => { if (v === '0') setSonido(false) })
     AsyncStorage.getItem('@timba:pool_musica').then(v => { if (v === '1') setMusica(true) })
     AsyncStorage.getItem('@timba:pool_haptica').then(v => { if (v === '0') setHapticaOn(false) })
+    AsyncStorage.getItem('@timba:pool_volumen_sonido').then(v => { if (v) setVolumenSonido(parseFloat(v)) })
+    AsyncStorage.getItem('@timba:pool_volumen_musica').then(v => { if (v) setVolumenMusica(parseFloat(v)) })
     AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
       if (v && OPCIONES_TACO.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
     })

@@ -1,5 +1,6 @@
 import { useEffect, useState } from 'react'
 import { View, Text, StyleSheet, ScrollView, TouchableOpacity, Switch } from 'react-native'
+import Slider from '@react-native-community/slider'
 import { router } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { useColores } from '@/lib/ThemeContext'
@@ -12,6 +13,8 @@ import { ColoresTema } from '@/lib/colores'
 const CLAVE_SONIDO = '@timba:pool_sonido'
 const CLAVE_MUSICA = '@timba:pool_musica'
 const CLAVE_HAPTICA = '@timba:pool_haptica'
+const CLAVE_VOL_SONIDO = '@timba:pool_volumen_sonido'
+const CLAVE_VOL_MUSICA = '@timba:pool_volumen_musica'
 
 export default function Ajustes() {
   const c = useColores()
@@ -19,6 +22,8 @@ export default function Ajustes() {
   const [sonido, setSonido] = useState(true)
   const [musica, setMusica] = useState(false)
   const [haptica, setHaptica] = useState(true)
+  const [volSonido, setVolSonido] = useState(1)
+  const [volMusica, setVolMusica] = useState(1)
   const [listo, setListo] = useState(false)
 
   useEffect(() => {
@@ -26,10 +31,14 @@ export default function Ajustes() {
       AsyncStorage.getItem(CLAVE_SONIDO),
       AsyncStorage.getItem(CLAVE_MUSICA),
       AsyncStorage.getItem(CLAVE_HAPTICA),
-    ]).then(([s, m, h]) => {
+      AsyncStorage.getItem(CLAVE_VOL_SONIDO),
+      AsyncStorage.getItem(CLAVE_VOL_MUSICA),
+    ]).then(([s, m, h, vs, vm]) => {
       if (s === '0') setSonido(false)
       if (m === '1') setMusica(true)
       if (h === '0') setHaptica(false)
+      if (vs) setVolSonido(parseFloat(vs))
+      if (vm) setVolMusica(parseFloat(vm))
       setListo(true)
     })
   }, [])
@@ -37,6 +46,10 @@ export default function Ajustes() {
   function toggle(clave: string, valor: boolean, set: (v: boolean) => void) {
     set(valor)
     AsyncStorage.setItem(clave, valor ? '1' : '0')
+  }
+
+  function guardarVolumen(clave: string, valor: number) {
+    AsyncStorage.setItem(clave, String(valor))
   }
 
   if (!listo) return <View style={es.contenedor} />
@@ -65,12 +78,26 @@ export default function Ajustes() {
             onValueChange={v => toggle(CLAVE_SONIDO, v, setSonido)}
             c={c}
           />
+          <FilaVolumen
+            valor={volSonido}
+            deshabilitado={!sonido}
+            onValueChange={setVolSonido}
+            onSlidingComplete={v => guardarVolumen(CLAVE_VOL_SONIDO, v)}
+            c={c}
+          />
           <View style={[es.separador, { backgroundColor: c.borde }]} />
           <Fila
             titulo="Música ambiental"
             subtitulo="Se baja sola mientras corre un tiro"
             valor={musica}
             onValueChange={v => toggle(CLAVE_MUSICA, v, setMusica)}
+            c={c}
+          />
+          <FilaVolumen
+            valor={volMusica}
+            deshabilitado={!musica}
+            onValueChange={setVolMusica}
+            onSlidingComplete={v => guardarVolumen(CLAVE_VOL_MUSICA, v)}
             c={c}
           />
           <View style={[es.separador, { backgroundColor: c.borde }]} />
@@ -111,10 +138,39 @@ function Fila({ titulo, subtitulo, valor, onValueChange, c }: {
   )
 }
 
+function FilaVolumen({ valor, deshabilitado, onValueChange, onSlidingComplete, c }: {
+  valor: number; deshabilitado: boolean
+  onValueChange: (v: number) => void; onSlidingComplete: (v: number) => void; c: ColoresTema
+}) {
+  return (
+    <View style={[filaEstilos.filaVolumen, deshabilitado && { opacity: 0.4 }]}>
+      <Text style={[filaEstilos.iconoVolumen, { color: c.textoSuave }]}>🔈</Text>
+      <Slider
+        style={{ flex: 1, height: 32 }}
+        value={valor}
+        minimumValue={0}
+        maximumValue={1}
+        disabled={deshabilitado}
+        onValueChange={onValueChange}
+        onSlidingComplete={onSlidingComplete}
+        minimumTrackTintColor={c.primario}
+        maximumTrackTintColor={c.borde}
+        thumbTintColor={c.primario}
+      />
+      <Text style={[filaEstilos.iconoVolumen, { color: c.textoSuave }]}>🔊</Text>
+    </View>
+  )
+}
+
 const filaEstilos = StyleSheet.create({
   fila: { flexDirection: 'row', alignItems: 'center', paddingVertical: 14, paddingHorizontal: 16 },
   titulo: { fontSize: 15, fontWeight: '700' },
   subtitulo: { fontSize: 12, marginTop: 2 },
+  filaVolumen: {
+    flexDirection: 'row', alignItems: 'center', gap: 8,
+    paddingHorizontal: 16, paddingBottom: 12, marginTop: -6,
+  },
+  iconoVolumen: { fontSize: 13 },
 })
 
 function makeEstilos(c: ColoresTema) {

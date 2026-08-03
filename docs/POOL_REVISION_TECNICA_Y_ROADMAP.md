@@ -994,6 +994,16 @@ el navegador del preview — `tsc --noEmit` limpio y los 66 tests del motor pasa
 verificación visual real queda pendiente de que la pruebes vos en la app (o me pases una forma de
 loguearme en el preview).
 
+**Extra pedido después de entregar la fase**: sliders de volumen para efectos y música, no
+contemplados en el diseño original de 10.1 (que solo tenía on/off). Se instaló
+`@react-native-community/slider` (vía `expo install`, versión resuelta para SDK 56, con soporte
+web confirmado — `RNCSliderNativeComponent.web.tsx` existe en el paquete). `useSonidoPool` y
+`useMusicaPool` ahora aceptan un segundo parámetro `volumenMaestro` (0..1) que multiplica el
+volumen de cada reproducción; se persiste en `@timba:pool_volumen_sonido`/`_musica`, actualizado
+con `onSlidingComplete` (no en cada pixel de drag) para no saturar AsyncStorage. Cada slider se
+deshabilita visualmente cuando su toggle está apagado (no tiene sentido ajustar el volumen de
+algo que no está sonando).
+
 ### Fase 11 — Centro de invitaciones (decisión de alcance app-wide, §9)
 *Impacto: medio (hoy funciona, aunque triplicado). Dificultad: alta si es la versión completa. Dependencias: ninguna.*
 

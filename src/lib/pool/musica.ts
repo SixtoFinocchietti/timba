@@ -20,8 +20,10 @@ export interface MusicaPool {
   restaurar: () => void
 }
 
-export function useMusicaPool(habilitada: boolean): MusicaPool {
+export function useMusicaPool(habilitada: boolean, volumenMaestro = 1): MusicaPool {
   const playerRef = useRef<AudioPlayer | null>(null)
+  const volRef = useRef(volumenMaestro)
+  volRef.current = volumenMaestro
 
   useEffect(() => {
     if (!habilitada) return
@@ -29,7 +31,7 @@ export function useMusicaPool(habilitada: boolean): MusicaPool {
     try {
       player = createAudioPlayer(FUENTE)
       player.loop = true
-      player.volume = VOLUMEN_NORMAL
+      player.volume = VOLUMEN_NORMAL * volRef.current
       player.play()
       playerRef.current = player
     } catch {
@@ -42,8 +44,8 @@ export function useMusicaPool(habilitada: boolean): MusicaPool {
     }
   }, [habilitada])
 
-  const reducir = () => { try { if (playerRef.current) playerRef.current.volume = VOLUMEN_REDUCIDO } catch {} }
-  const restaurar = () => { try { if (playerRef.current) playerRef.current.volume = VOLUMEN_NORMAL } catch {} }
+  const reducir = () => { try { if (playerRef.current) playerRef.current.volume = VOLUMEN_REDUCIDO * volRef.current } catch {} }
+  const restaurar = () => { try { if (playerRef.current) playerRef.current.volume = VOLUMEN_NORMAL * volRef.current } catch {} }
 
   return { reducir, restaurar }
 }
