@@ -99,10 +99,15 @@ export default function SalaPool() {
         setAmigoListo(otros.some((p: any) => p.listo))
       })
       .on('broadcast', { event: 'cancelar' }, ({ payload }) => {
-        // Si soy el host y había una timba vinculada, la cancelo yo (solo el
-        // creador puede, por RLS) — sin importar quién apretó "Cancelar".
-        if (!esInvitado && timba) {
-          supabase.from('timbas').update({ estado: 'cancelada' }).eq('id', timba.id).eq('estado', 'activa')
+        // La RPC admite a ambos jugadores y no depende de que el host siga
+        // conectado para cancelar la Timba vinculada. Best-effort: si falla,
+        // igual se sale de la sala (el otro cliente ya lo está intentando
+        // también), pero se loguea para no repetir el error de R7 (fallar
+        // en silencio sin que quede ningún rastro).
+        if (timba) {
+          supabase.rpc('cancelar_timba_pool_previa', { p_timba_id: timba.id }).then(({ error }) => {
+            if (error) console.warn('cancelar_timba_pool_previa falló:', error.message)
+          })
         }
         Alert.alert('Partida cancelada', `${payload?.por ?? amigoNombre} canceló antes de arrancar.`, [
           { text: 'OK', onPress: () => router.back() },
@@ -113,7 +118,7 @@ export default function SalaPool() {
       })
 
     return () => { supabase.removeChannel(canal); canalRef.current = null }
-  }, [usuario?.id, params.amigoId, esInvitado])
+  }, [usuario?.id, params.amigoId, esInvitado, timba, amigoNombre])
 
   // Invitado: escucha el INSERT en partidas_pool y navega al juego
   useEffect(() => {
@@ -159,8 +164,9 @@ export default function SalaPool() {
         onPress: async () => {
           setSaliendo(true)
           await canalRef.current?.send({ type: 'broadcast', event: 'cancelar', payload: { por: tuNombre } })
-          if (!esInvitado && timba) {
-            await supabase.from('timbas').update({ estado: 'cancelada' }).eq('id', timba.id).eq('estado', 'activa')
+          if (timba) {
+            const { error } = await supabase.rpc('cancelar_timba_pool_previa', { p_timba_id: timba.id })
+            if (error) console.warn('cancelar_timba_pool_previa falló:', error.message)
           }
           router.back()
         },
@@ -183,6 +189,7 @@ export default function SalaPool() {
       receptor_id: params.amigoId,
       tipo: 'invitacion_pool',
       contenido,
+      timba_id: params.timbaId ?? null,
     })
     setReenviando(false)
   }

@@ -30,7 +30,7 @@ import { haptica } from '@/lib/pool/haptica'
 import { CLAVE_TACO_SKIN, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
 import { CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NivelAsistencia } from '@/lib/pool/asistencia'
 import {
-  CABECERA_Y, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
+  CABECERA_Y, clonarBolas, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
 } from '@/lib/pool/fisica'
 import { Dificultad, decidirTiro, generarCandidatos } from '@/lib/pool/bot'
 import {
@@ -64,6 +64,16 @@ interface TimbaFinal {
   monto_minimo: number | null
   estado: 'activa' | 'en_disputa' | 'cerrada' | 'cancelada'
   resultado_ganador: string | null
+}
+
+// El replay conserva el estado EXACTO previo y el input completo del tiro.
+// No vuelve a ejecutar reglas ni escribe a la red: solo reanima el resultado
+// que el jugador ya vio. Por ahora se ofrece en práctica y contra el bot; en
+// online habría que resolver qué hacer si llega un update remoto mientras el
+// replay está reproduciéndose.
+interface ReplayTiro {
+  bolas: Bola[]
+  tiro: Tiro
 }
 
 const NOMBRE_DIFICULTAD: Record<Dificultad, string> = {
@@ -135,6 +145,7 @@ export default function PartidaPool() {
   const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
   const [nivelAsistencia, setNivelAsistencia] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
   const [anguloSugerido, setAnguloSugerido] = useState<number | null>(null)
+  const [ultimoReplay, setUltimoReplay] = useState<ReplayTiro | null>(null)
   const [timbaFinal, setTimbaFinal] = useState<TimbaFinal | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [anchoMesa, setAnchoMesa] = useState(0)
@@ -358,31 +369,38 @@ export default function PartidaPool() {
     return () => { supabase.removeChannel(canal) }
   }, [esOnline, partidaId, usuario?.id, miAsiento])
 
-  // timer de turno (corre para ambos; solo ACTÚA el dueño del turno)
+  // Timer de turno (corre para ambos; solo ACTÚA el dueño del turno).
+  // Reconciliado contra fila.updated_at (roadmap §11.1): antes contaba desde
+  // fila.timer_seg con un setInterval puramente local — al volver de
+  // background (donde el interval de RN se pausa) el número mostrado podía
+  // no reflejar el tiempo real transcurrido. Ahora el límite se calcula una
+  // vez contra el timestamp del servidor y cada tick recalcula "cuánto
+  // falta" contra el reloj real, así que el primer tick después de volver
+  // ya muestra el valor correcto en vez de seguir donde se había quedado.
   useEffect(() => {
     if (!esOnline || !fila || fila.timer_seg === 0 || !estado || estado.fase === 'fin' || fila.fase !== 'en_juego' || animando) {
       setSegundos(null)
       return
     }
-    setSegundos(fila.timer_seg)
-    const iv = setInterval(() => {
-      setSegundos(s => {
-        if (s === null) return null
-        if (s <= 1) {
-          clearInterval(iv)
-          if (estadoRef.current?.turno === miJugador) vencioMiTimer()
-          // gracia nivel 1 (Fase 9): es el turno del rival, ya venció SU
-          // timer y encima está ausente — probablemente su cliente nunca va
-          // a disparar vencioMiTimer() solo. Chequeo server-side con margen
-          // real dentro de reclamarTurnoPorAusencia(), esto es solo el gatillo.
-          else if (!rivalPresenteRef.current) reclamarTurnoPorAusencia()
-          return 0
-        }
-        return s - 1
-      })
-    }, 1000)
+    const limiteMs = new Date(fila.updated_at).getTime() + fila.timer_seg * 1000
+    let disparado = false
+    const tick = () => {
+      const restante = Math.max(0, Math.ceil((limiteMs - Date.now()) / 1000))
+      setSegundos(restante)
+      if (restante <= 0 && !disparado) {
+        disparado = true
+        if (estadoRef.current?.turno === miJugador) vencioMiTimer()
+        // gracia nivel 1 (Fase 9): es el turno del rival, ya venció SU
+        // timer y encima está ausente — probablemente su cliente nunca va
+        // a disparar vencioMiTimer() solo. Chequeo server-side con margen
+        // real dentro de reclamarTurnoPorAusencia(), esto es solo el gatillo.
+        else if (!rivalPresenteRef.current) reclamarTurnoPorAusencia()
+      }
+    }
+    tick()
+    const iv = setInterval(tick, 1000)
     return () => clearInterval(iv)
-  }, [esOnline, fila?.num_tiro, fila?.timer_seg, fila?.fase, estado?.turno, animando, miJugador])
+  }, [esOnline, fila?.num_tiro, fila?.timer_seg, fila?.fase, fila?.updated_at, estado?.turno, animando, miJugador])
 
   // el humano tiene bola en mano ahora mismo
   const turnoMio = esOnline
@@ -409,6 +427,7 @@ export default function PartidaPool() {
     setAnguloSugerido(null) // rack nuevo invalida cualquier sugerencia sobre la mesa anterior
     setBolaEnManoPractica(false)
     setAngulo(Math.PI / 2)
+    setUltimoReplay(null)
     const rack = crearRack(nuevaSeed())
     setBolas(rack)
     if (esBot) {
@@ -440,6 +459,10 @@ export default function PartidaPool() {
   // ── ejecutar un tiro y animarlo (local: humano/bot; online: el mío) ──
   function ejecutarTiro(t: Tiro, bolasAhora?: Bola[]) {
     const base = bolasAhora ?? bolasRef.current
+    setUltimoReplay({
+      bolas: clonarBolas(base),
+      tiro: { ...t, ...(t.posBlanca ? { posBlanca: { ...t.posBlanca } } : {}) },
+    })
     const res = simularTiro(base, t)
     setSpin({ a: 0, b: 0 })
     setFuerza(0)
@@ -450,6 +473,14 @@ export default function PartidaPool() {
       else if (esBot) procesarReglas(res)
       else procesarPractica(res)
     })
+  }
+
+  function repetirUltimoTiro() {
+    if (!ultimoReplay || animando || pensando) return
+    const res = simularTiro(clonarBolas(ultimoReplay.bolas), ultimoReplay.tiro)
+    // Replay es estrictamente visual: no procesa reglas, no cambia la mesa y
+    // no persiste nada. Al terminar, el estado actual sigue intacto.
+    animar(res, () => {})
   }
 
   function animar(res: ResultadoSimulacion, alTerminar: () => void) {
@@ -500,7 +531,9 @@ export default function PartidaPool() {
     if (resultado.rerack) {
       avisar('La 8 cayó en el break: se arma de nuevo')
     } else if (resultado.faltas.length > 0) {
-      const quien = quienTiro === miJugador && !esOnline ? '' : quienTiro === (esOnline ? miJugador : HUMANO) ? '' : ` de ${nombreOtro}`
+      // !esOnline implica miJugador === HUMANO (ver su definición), así que
+      // la comparación de abajo ya cubre ambos casos sin repetirla (roadmap §11.1)
+      const quien = quienTiro === (esOnline ? miJugador : HUMANO) ? '' : ` de ${nombreOtro}`
       avisar(`${TEXTO_FALTA[resultado.faltas[0]]}${quien}`)
     } else if (resultado.asignoGrupos) {
       const mio = e2.grupos[esOnline ? miJugador : HUMANO] === 'lisas' ? 'las LISAS' : 'las RAYADAS'
@@ -911,17 +944,30 @@ export default function PartidaPool() {
           (feedback de juego real, jul 2026) en vez de competir con Efecto y
           los botones de fino en la barra de abajo, que en pantallas
           angostas no entraban los cuatro juntos */}
-      {!esBot && !esOnline && (
+      {!esOnline && (
         <View style={es.filaSuperior}>
-          <TouchableOpacity
-            style={[es.botonSuperior, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
-            onPress={sugerirTiro}
-            activeOpacity={0.8}
-            disabled={!controlesActivos}
-          >
-            <Text style={{ fontSize: 15 }}>💡</Text>
-            <Text style={[es.botonSuperiorTexto, { color: c.textoSuave }]}>Sugerencia</Text>
-          </TouchableOpacity>
+          {!esBot && !esOnline && (
+            <TouchableOpacity
+              style={[es.botonSuperior, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+              onPress={sugerirTiro}
+              activeOpacity={0.8}
+              disabled={!controlesActivos}
+            >
+              <Text style={{ fontSize: 15 }}>💡</Text>
+              <Text style={[es.botonSuperiorTexto, { color: c.textoSuave }]}>Sugerencia</Text>
+            </TouchableOpacity>
+          )}
+          {!esOnline && ultimoReplay && (
+            <TouchableOpacity
+              style={[es.botonSuperior, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+              onPress={repetirUltimoTiro}
+              activeOpacity={0.8}
+              disabled={animando || pensando}
+            >
+              <Text style={{ fontSize: 15 }}>↻</Text>
+              <Text style={[es.botonSuperiorTexto, { color: c.textoSuave }]}>Replay</Text>
+            </TouchableOpacity>
+          )}
         </View>
       )}
 
@@ -1211,7 +1257,7 @@ function makeEstilos(c: ColoresTema) {
     chipBolas: { flexDirection: 'row', gap: 3, minHeight: 12 },
     vs: { fontSize: 12, fontWeight: '800' },
     timer: { fontSize: 11, fontWeight: '800' },
-    filaSuperior: { alignItems: 'flex-end', paddingHorizontal: 20, paddingTop: 2 },
+    filaSuperior: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 20, paddingTop: 2 },
     botonSuperior: {
       flexDirection: 'row', alignItems: 'center', gap: 6,
       borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6,

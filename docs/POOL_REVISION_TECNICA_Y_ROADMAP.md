@@ -1028,14 +1028,14 @@ de si vale la pena — es la parte cara de esta fase y no fue pedida todavía.
 | Subtarea | Dificultad |
 |---|---|
 | ~~12.1 Envolver el contenido de `SelectorSpin.tsx` en su propio `GestureHandlerRootView` (§10.5)~~ | **✅ Aplicado** — pendiente confirmar en el Samsung real que resolvió el síntoma |
-| 12.2 Fijar versiones de paquetes nativos al rango que valida Expo (`expo install --check`) | Baja |
-| 12.3 Simplificar `comunicarResultado()` (§11.1) | Baja |
-| 12.4 Timer reconciliado contra `updated_at` del servidor, no solo `setInterval` local (§11.1) | Media |
-| 12.5 Sacar/proteger ruta de `debug-pool.tsx` antes de producción | Baja |
+| ~~12.2 Fijar versiones de paquetes nativos al rango que valida Expo (`expo install --check`)~~ | **✅ Verificado** — Expo reporta dependencias al día |
+| ~~12.3 Simplificar `comunicarResultado()` (§11.1)~~ | **✅ Aplicado** |
+| ~~12.4 Timer reconciliado contra `updated_at` del servidor, no solo `setInterval` local (§11.1)~~ | **✅ Aplicado** |
+| ~~12.5 Sacar/proteger ruta de `debug-pool.tsx` antes de producción~~ | **✅ Aplicado** — ruta protegida por `__DEV__` |
 | ~~12.6 Separar flag de háptica del de sonido~~ | **✅ Adelantado en Fase 10.1** |
-| 12.7 Confirmar que `palo_pool_1.png`/`_2.png` estén trackeados en git | Baja |
-| 12.8 Replay del último tiro (mejora no pedida, §11.3) | Baja |
-| 12.9 Stats de Pool en el perfil (mejora no pedida, §11.3) | Media |
+| ~~12.7 Confirmar que `palo_pool_1.png`/`_2.png` estén trackeados en git~~ | **✅ Verificado** |
+| ~~12.8 Replay del último tiro (mejora no pedida, §11.3)~~ | **✅ Aplicado** — solo práctica/bot; no altera la partida ni la red |
+| ~~12.9 Stats de Pool en el perfil (mejora no pedida, §11.3)~~ | **✅ Aplicado** — partidas, victorias, derrotas y racha propia |
 
 ---
 

@@ -151,7 +151,6 @@ export default function PoolOnlineConfig() {
       // una sola vez, atómico, cuando la partida termina — 0% intervención.
     }
 
-    setSheetVisible(false)
     const contenido = JSON.stringify({
       serie,
       timer,
@@ -159,7 +158,7 @@ export default function PoolOnlineConfig() {
       hostNombre: usuario.nombre ?? '',
       timbaId,
     })
-    await supabase.from('mensajes').insert({
+    const { error: invitacionError } = await supabase.from('mensajes').insert({
       emisor_id: usuario.id,
       receptor_id: amigo.id,
       tipo: 'invitacion_pool',
@@ -169,6 +168,19 @@ export default function PoolOnlineConfig() {
       // timba en la sala antes de tener fila en participantes
       timba_id: timbaId,
     })
+    if (invitacionError) {
+      if (timbaId) {
+        await supabase
+          .from('timbas')
+          .update({ estado: 'cancelada' })
+          .eq('id', timbaId)
+          .eq('creador_id', usuario.id)
+          .eq('estado', 'activa')
+      }
+      Alert.alert('No se pudo enviar la invitación', invitacionError.message)
+      return
+    }
+    setSheetVisible(false)
     router.push({
       pathname: '/juegos/sala-pool',
       params: {
