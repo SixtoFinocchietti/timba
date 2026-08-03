@@ -938,11 +938,42 @@ jugador — mantiene el flujo simple).
 | ✅ RPC `cerrar_timba_juego(p_partida_id)` (migración `021_pool_timba_auto_resolucion.sql`) | Alta | `SECURITY DEFINER`, idempotente (no hace nada si `timbas.estado` ya no es `'activa'`) — necesaria porque `deudas` no tiene policy de INSERT para usuarios comunes, y `timbas_update` solo deja escribir al creador (acá cualquiera de los 2 jugadores tiene que poder disparar la resolución) |
 | ✅ Crear la Timba ANTES de invitar, en `pool-online.tsx` | Alta | Sección nueva "Timba (opcional)": tipo + premio/prenda o monto único — sin el formulario avanzado de `nueva.tsx` (cupos, fechas), sin mostrar las opciones (ya se sabe cuáles son: "Gana vos"/"Gana el amigo") |
 | ✅ La invitación (mensaje de chat + card) avisa "🎲 Con timba" | Media | `timbaId` viaja en el `contenido` del mensaje `invitacion_pool` |
-| ✅ Sala: reglas de la timba + config visibles, "Listo" mutuo, arranque automático | Alta | Presence trackea `{rol, listo}`; cuando ambos están listos el host dispara `empezarPartida()` solo (antes había un botón manual). "Cancelar juego": broadcast en el mismo canal, cierra la sala para los dos y cancela la timba si la había (el host la cancela sin importar quién apretó el botón, porque solo el creador puede por RLS) |
-| ✅ Auto-voto de cada jugador por sí mismo | Media | Al tocar "Listo", cada cliente hace upsert de SU PROPIO `participantes` (RLS exige `auth.uid() = usuario_id` — no se puede votar por el otro) |
+| ✅ Sala: reglas de la timba + config visibles, "Listo" mutuo, arranque automático | Alta | Presence trackea `{rol, listo}`; cuando ambos están listos el host dispara `empezarPartida()` solo (antes había un botón manual). "Cancelar juego": broadcast en el mismo canal, cierra la sala para los dos |
+| ~~Auto-voto de cada jugador por sí mismo~~ → **sacado** (ver Fase 9-ter) | — | La primera versión hacía upsert desde 2 clientes en 2 momentos distintos — resultó frágil, ver abajo |
 | ✅ `cerrar_timba_juego` se dispara solo al terminar la partida | Media | Efecto en `partida-pool.tsx` sobre `fila.fase`/`fila.timba_id`, guardado con un ref para no llamarlo dos veces por cliente — igual es idempotente si los dos clientes lo llaman a la vez |
 | ✅ Overlay de fin con premio/prenda/plata | Media | "Has ganado"/"Has perdido" + "Tu premio es: X" / "Tu prenda es: X" / "Ahora te deben \$X" / "Ahora debés \$X" — ya no hay botón "Crear Timba" (se movió a antes de jugar) |
-| ✅ Limpieza | Baja | Se sacó `crearTimbaResultado()` de `partida-pool.tsx` y el parámetro `poolPartidaId` de `nueva.tsx` (quedaban sin uso con el nuevo flujo). El banner de "resultado sugerido" de la Fase 9 original (`app/timba/[id].tsx`) se dejó intacto como respaldo manual para el caso raro de que `cerrar_timba_juego` nunca llegue a dispararse (los dos cierran la app antes) |
+| ✅ Limpieza | Baja | Se sacó `crearTimbaResultado()` de `partida-pool.tsx` y el parámetro `poolPartidaId` de `nueva.tsx` (quedaban sin uso con el nuevo flujo) |
+
+### Fase 9-ter — sacar la votación humana por completo — ✅ hecha
+*Impacto: alto (corrige un bug real de datos). Dificultad: media.*
+
+El diseño de la Fase 9-bis todavía dependía de que cada jugador votara por sí mismo al tocar
+"Listo" (upsert en `participantes` desde 2 clientes, en 2 momentos distintos). El usuario probó
+esto y reportó dos problemas reales: (1) todavía había que ir a la Timba a votar/proponer — nada
+práctico — y (2) propuso directamente sacar la votación del medio. Se confirmó investigando la
+base en vivo (`execute_sql` del MCP de Supabase): las 2 timbas de Pool más recientes habían
+cerrado con el ganador correcto, pero con **0 votos registrados** — el upsert fallaba en
+silencio (nunca se chequeaba el `.error`), dejando la timba resuelta pero sin las filas de
+`participantes` que el resto del sistema (historial, "ganaste"/"perdiste") necesita.
+
+**Decisión**: seguir usando `timbas`/`deudas` (reutiliza toda la integración ya armada con
+"Saldos" e historial de perfil — no vale la pena duplicar eso), pero sacar la votación humana
+del medio por completo:
+
+| Cambio | Nota |
+|---|---|
+| `cerrar_timba_juego` reescrita (migración `022_pool_timba_sin_votacion.sql`) | Ahora anota a los DOS jugadores en `participantes` atómicamente, en la misma transacción que cierra la timba — nadie vota nunca. El monto ya no se busca en `participantes` (podía no existir) sino que se lee directo de `timbas.monto_minimo` |
+| `pool-online.tsx` y `sala-pool.tsx` ya no escriben en `participantes` | Ni al crear la timba ni al tocar "Listo" — cero intervención del jugador, como se pidió |
+| `perfil_publico()` excluye timbas con partida vinculada de "tus timbas activas" | `and not exists (select 1 from partidas_pool pp where pp.timba_id = t.id)` — solo mientras están `en_juego`; una vez `cerrada` aparecen en el historial normalmente, sin cambios ahí |
+| `app/(tabs)/home.tsx` (listado principal) — mismo filtro, del lado del cliente | Consulta `partidas_pool` por las propias y excluye esos ids |
+| `app/timba/[id].tsx`: modo de solo lectura para timbas de juego | Mientras `estado==='activa'` y hay una `partidas_pool` vinculada, se reemplaza la UI de votar/proponer por un aviso ("se resuelve sola"). De paso, red de seguridad: si alguien abre la timba y la partida vinculada ya terminó pero la timba sigue `activa`, se reintenta `cerrar_timba_juego` ahí mismo (idempotente) |
+| Se sacó el banner de "resultado sugerido" de la Fase 9 original | Quedó obsoleto: ya no tiene sentido proponer nada a mano para una timba de juego |
+
+**Lección para el futuro**: cualquier escritura Supabase sin chequear `.error` puede fallar en
+silencio y dejar datos a medio resolver sin ningún síntoma visible en la UI — en este caso el
+síntoma solo apareció consultando la base directamente. Vale la pena, ante un reporte de "esto
+no se está comportando como debería", chequear el estado real en Supabase (`execute_sql`,
+`get_logs`) antes de asumir dónde está el bug.
 
 ### Fase 10 — Contenido y configuración (mayor impacto en percepción de pulido)
 *Impacto: medio-alto. Dificultad: media. Dependencias: ninguna técnica.*

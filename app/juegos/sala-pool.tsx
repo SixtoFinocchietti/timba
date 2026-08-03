@@ -61,8 +61,6 @@ export default function SalaPool() {
   const canalRef = useRef<ReturnType<typeof supabase.channel> | null>(null)
   const empezandoRef = useRef(false) // evita disparar empezarPartida() dos veces
 
-  const subtitulo = `${serie === 3 ? 'Mejor de 3' : 'Partida suelta'} · ${timer === 0 ? 'Sin límite de tiempo' : `${timer}s por tiro`}`
-
   // Timba vinculada (si la invitación traía una) — reglas visibles antes de
   // arrancar (spec: "en la sala debe dejarte ver las reglas de la timba").
   useEffect(() => {
@@ -145,19 +143,9 @@ export default function SalaPool() {
 
   async function marcarListo() {
     if (!usuario?.id || yoListo) return
-    // voto automático por mí mismo (spec: "ambos jugadores votan por sí
-    // mismos") — cada uno inserta el suyo, RLS no deja insertar el ajeno
-    if (timba) {
-      await supabase.from('participantes').upsert(
-        {
-          timba_id: timba.id,
-          usuario_id: usuario.id,
-          opcion_elegida: `Gana ${tuNombre}`,
-          monto: timba.tipo === 'monetaria' ? timba.monto_minimo : null,
-        },
-        { onConflict: 'timba_id,usuario_id' },
-      )
-    }
+    // Sin voto acá (ago 2026): cerrar_timba_juego() anota a los dos jugadores
+    // atómicamente cuando la partida termina — "Listo" solo confirma
+    // presencia, no toca la timba para nada.
     setYoListo(true)
     await canalRef.current?.track({ rol: esInvitado ? 'invitado' : 'host', listo: true })
   }
@@ -221,9 +209,6 @@ export default function SalaPool() {
     } as any)
   }
 
-  const opcionGanador = timba?.opciones.find(o => o.includes(tuNombre))
-  const opcionRival = timba?.opciones.find(o => o.includes(amigoNombre))
-
   return (
     <View style={[es.contenedor, { backgroundColor: c.fondo }]}>
       <View style={es.header}>
@@ -233,7 +218,6 @@ export default function SalaPool() {
         <Text style={[es.tituloHeader, { color: c.texto }]}>Mesa de Pool</Text>
         <View style={{ width: 18 }} />
       </View>
-      <Text style={[es.subtitulo, { color: c.textoSuave }]}>{subtitulo}</Text>
 
       <View style={es.centro}>
         <AppIcon name="pool" size={48} color={c.primario} />
@@ -256,6 +240,21 @@ export default function SalaPool() {
               <Text style={[es.jugadorEstado, { color: amigoListo ? c.exito : c.textoSuave }]}>{amigoListo ? 'listo' : 'en la sala'}</Text>
             )}
           </View>
+        </View>
+
+        {/* Configuración de la partida — mismo peso visual que la tarjeta de
+            la timba, visible para los dos (host e invitado por igual). */}
+        <View style={[es.timbaCard, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+          <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+            <AppIcon name="ajustes" size={16} color={c.textoSuave} />
+            <Text style={[es.timbaTitulo, { color: c.texto }]}>Configuración de la partida</Text>
+          </View>
+          <Text style={[es.timbaDetalle, { color: c.texto }]}>
+            {serie === 3 ? 'Mejor de 3' : 'Partida suelta'}
+          </Text>
+          <Text style={[es.timbaDetalle, { color: c.texto }]}>
+            {timer === 0 ? 'Sin límite de tiempo por tiro' : `${timer}s por tiro`}
+          </Text>
         </View>
 
         {conexionInestable && (
@@ -354,7 +353,6 @@ function makeEstilos(c: ColoresTema) {
     },
     volver: { fontSize: 26, fontWeight: '700', width: 18 },
     tituloHeader: { fontSize: 18, fontWeight: '800' },
-    subtitulo: { fontSize: 13, textAlign: 'center', marginTop: 2 },
     centro: { flex: 1, alignItems: 'center', justifyContent: 'center', gap: 18, paddingHorizontal: 24, paddingVertical: 16 },
     jugadores: { flexDirection: 'row', alignItems: 'center', gap: 14 },
     jugador: {

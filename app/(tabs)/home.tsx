@@ -31,20 +31,25 @@ export default function Home() {
     setErrorCarga(null)
     try {
       const userId = usuario?.id
-      const [{ data: creadas, error: e1 }, { data: unidas, error: e2 }] = await Promise.all([
+      const [{ data: creadas, error: e1 }, { data: unidas, error: e2 }, { data: vinculadas }] = await Promise.all([
         supabase.from('timbas').select('*').eq('creador_id', userId).neq('estado', 'cerrada'),
         supabase.from('participantes').select('timba:timbas(*)').eq('usuario_id', userId),
+        // timbas de un juego (hoy: Pool) mientras la partida sigue en curso —
+        // se resuelven solas, no deben aparecer acá (ago 2026)
+        supabase.from('partidas_pool').select('timba_id').not('timba_id', 'is', null)
+          .or(`host_id.eq.${userId},invitado_id.eq.${userId}`),
       ])
       if (e1 || e2) throw e1 ?? e2
+      const idsDeJuego = new Set((vinculadas ?? []).map((p: any) => p.timba_id as string))
       const ahora = new Date()
       function visible(t: Timba) {
         return !t.fecha_inicio || new Date(t.fecha_inicio) <= ahora
       }
       const mapa = new Map<string, Timba>()
-      ;(creadas ?? []).forEach((t: Timba) => { if (visible(t)) mapa.set(t.id, t) })
+      ;(creadas ?? []).forEach((t: Timba) => { if (visible(t) && !idsDeJuego.has(t.id)) mapa.set(t.id, t) })
       ;(unidas ?? []).forEach((p: any) => {
         const t = p.timba as Timba | undefined
-        if (t && t.estado !== 'cerrada' && visible(t)) mapa.set(t.id, t)
+        if (t && t.estado !== 'cerrada' && visible(t) && !idsDeJuego.has(t.id)) mapa.set(t.id, t)
       })
       setTimbas(
         Array.from(mapa.values()).sort((a, b) => new Date(b.created_at).getTime() - new Date(a.created_at).getTime())

@@ -157,9 +157,9 @@ export default function PoolOnlineConfig() {
       }).select('id').single()
       if (error || !timba) { Alert.alert('No se pudo crear la timba', error?.message ?? ''); return }
       timbaId = timba.id
-      // el creador queda anotado como participante — todavía sin votar: el
-      // voto automático por sí mismo pasa recién al tocar "Listo" en la sala
-      await supabase.from('participantes').insert({ timba_id: timbaId, usuario_id: usuario.id, opcion_elegida: null })
+      // sin voto humano (ago 2026): ningún jugador queda anotado como
+      // participante hasta que cerrar_timba_juego() los anota a los DOS de
+      // una sola vez, atómico, cuando la partida termina — 0% intervención.
     }
 
     setSheetVisible(false)
