@@ -9,6 +9,7 @@ import {
   TextInput, FlatList, ActivityIndicator, Pressable, Alert,
 } from 'react-native'
 import { router } from 'expo-router'
+import AsyncStorage from '@react-native-async-storage/async-storage'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
 import { useColores } from '@/lib/ThemeContext'
@@ -41,6 +42,15 @@ function generarCodigo(): string {
   return Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
 
+// Invitaciones: solo la más reciente por amigo distinto, de los últimos 10
+// minutos, y de esas se muestra una sola card a la vez (spec §7.2) — una
+// invitación a jugar pierde sentido rápido. El descarte (X) no borra el
+// mensaje (es historial de chat): se guarda el id en un set local que
+// persiste entre sesiones, y al filtrar sobre él aparece sola la siguiente
+// si existe — no hace falta ninguna lógica extra de "avanzar a la próxima".
+const VENTANA_INVITACION_MS = 10 * 60 * 1000
+const CLAVE_INV_DESCARTADAS = '@timba:pool_inv_descartadas'
+
 export default function PoolOnlineConfig() {
   const c = useColores()
   const es = makeEstilos(c)
@@ -54,6 +64,23 @@ export default function PoolOnlineConfig() {
   const [amigos, setAmigos] = useState<Amigo[]>([])
   const [cargando, setCargando] = useState(false)
   const [invitaciones, setInvitaciones] = useState<InvPool[]>([])
+  const [descartadas, setDescartadas] = useState<Set<string>>(new Set())
+  const invitacionVisible = invitaciones.find(inv => !descartadas.has(inv.id)) ?? null
+
+  useEffect(() => {
+    AsyncStorage.getItem(CLAVE_INV_DESCARTADAS).then(v => {
+      if (v) { try { setDescartadas(new Set(JSON.parse(v))) } catch {} }
+    })
+  }, [])
+
+  function descartarInvitacion(id: string) {
+    setDescartadas(prev => {
+      const next = new Set(prev)
+      next.add(id)
+      AsyncStorage.setItem(CLAVE_INV_DESCARTADAS, JSON.stringify([...next]))
+      return next
+    })
+  }
 
   // Timba opcional (ver nota arriba)
   const [conTimba, setConTimba] = useState(false)
@@ -79,19 +106,28 @@ export default function PoolOnlineConfig() {
 
   async function cargarInvitaciones() {
     if (!usuario?.id) return
-    const hace48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
+    const desde = new Date(Date.now() - VENTANA_INVITACION_MS).toISOString()
     const { data: msgs } = await supabase
       .from('mensajes')
       .select('id, emisor_id, contenido, created_at')
       .eq('receptor_id', usuario.id)
       .eq('tipo', 'invitacion_pool')
-      .gte('created_at', hace48h)
+      .gte('created_at', desde)
       .order('created_at', { ascending: false })
-      .limit(5)
+      .limit(20)
 
-    if (!msgs?.length) { setInvitaciones([]); return }
+    // solo la más reciente por emisor distinto — ya viene ordenado desc,
+    // así que la primera vez que aparece cada emisor es su invitación más nueva
+    const vistos = new Set<string>()
+    const unicos = (msgs as any[] ?? []).filter((m: any) => {
+      if (vistos.has(m.emisor_id)) return false
+      vistos.add(m.emisor_id)
+      return true
+    })
 
-    const emisorIds = [...new Set((msgs as any[]).map((m: any) => m.emisor_id))]
+    if (!unicos.length) { setInvitaciones([]); return }
+
+    const emisorIds = [...new Set(unicos.map((m: any) => m.emisor_id))]
     const { data: users } = await supabase
       .from('usuarios_publicos')
       .select('id, nombre')
@@ -100,7 +136,7 @@ export default function PoolOnlineConfig() {
     const nameMap: Record<string, string> = Object.fromEntries(
       (users ?? []).map((u: any) => [u.id, u.nombre])
     )
-    setInvitaciones((msgs as any[]).map((m: any) => ({
+    setInvitaciones(unicos.map((m: any) => ({
       ...m,
       emisorNombre: nameMap[m.emisor_id] ?? 'Amigo',
     })))
@@ -222,37 +258,44 @@ export default function PoolOnlineConfig() {
       </View>
       <Text style={[es.titulo, { color: c.texto }]}>Pool con un amigo</Text>
 
-      {/* invitaciones recibidas */}
-      {invitaciones.length > 0 && (
-        <View style={es.seccion}>
-          <Text style={[es.seccionTitulo, { color: c.textoSuave }]}>TE INVITARON</Text>
-          {invitaciones.map(inv => {
-            let cfg = { serie: 1, timer: 45, timbaId: null as string | null }
-            try { Object.assign(cfg, JSON.parse(inv.contenido)) } catch {}
-            return (
-              <View key={inv.id} style={[es.cardInv, { backgroundColor: c.fondoCard, borderColor: c.primario }]}>
-                <AppIcon name="pool" size={26} color={c.primario} />
-                <View style={{ flex: 1 }}>
-                  <Text style={[es.invNombre, { color: c.texto }]}>{inv.emisorNombre}</Text>
-                  <Text style={[es.invDetalle, { color: c.textoSuave }]}>
-                    {cfg.serie === 3 ? 'Mejor de 3' : 'Partida suelta'} · {cfg.timer === 0 ? 'sin límite' : `${cfg.timer}s por tiro`}
-                  </Text>
-                  {cfg.timbaId && (
-                    <Text style={[es.invDetalle, { color: c.primario, fontWeight: '700' }]}>🎲 Con timba</Text>
-                  )}
-                </View>
-                <TouchableOpacity
-                  style={[es.botonUnirse, { backgroundColor: c.primario }]}
-                  onPress={() => unirse(inv)}
-                  activeOpacity={0.8}
-                >
-                  <Text style={[es.botonUnirseTexto, { color: c.fondo }]}>Unirse</Text>
-                </TouchableOpacity>
+      {/* invitación recibida — una sola a la vez, la más reciente (spec §7.2) */}
+      {invitacionVisible && (() => {
+        const inv = invitacionVisible
+        let cfg = { serie: 1, timer: 45, timbaId: null as string | null }
+        try { Object.assign(cfg, JSON.parse(inv.contenido)) } catch {}
+        return (
+          <View style={es.seccion}>
+            <Text style={[es.seccionTitulo, { color: c.textoSuave }]}>TE INVITARON</Text>
+            <View style={[es.cardInv, { backgroundColor: c.fondoCard, borderColor: c.primario }]}>
+              <AppIcon name="pool" size={26} color={c.primario} />
+              <View style={{ flex: 1 }}>
+                <Text style={[es.invNombre, { color: c.texto }]}>{inv.emisorNombre}</Text>
+                <Text style={[es.invDetalle, { color: c.textoSuave }]}>
+                  {cfg.serie === 3 ? 'Mejor de 3' : 'Partida suelta'} · {cfg.timer === 0 ? 'sin límite' : `${cfg.timer}s por tiro`}
+                </Text>
+                {cfg.timbaId && (
+                  <Text style={[es.invDetalle, { color: c.primario, fontWeight: '700' }]}>🎲 Con timba</Text>
+                )}
               </View>
-            )
-          })}
-        </View>
-      )}
+              <TouchableOpacity
+                style={[es.botonUnirse, { backgroundColor: c.primario }]}
+                onPress={() => unirse(inv)}
+                activeOpacity={0.8}
+              >
+                <Text style={[es.botonUnirseTexto, { color: c.fondo }]}>Unirse</Text>
+              </TouchableOpacity>
+              <TouchableOpacity
+                onPress={() => descartarInvitacion(inv.id)}
+                activeOpacity={0.7}
+                hitSlop={10}
+                style={{ marginLeft: 4 }}
+              >
+                <AppIcon name="xCirculo" size={20} color={c.textoSuave} />
+              </TouchableOpacity>
+            </View>
+          </View>
+        )
+      })()}
 
       {/* configuración */}
       <View style={es.seccion}>

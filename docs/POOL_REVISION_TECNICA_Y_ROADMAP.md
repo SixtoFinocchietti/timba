@@ -975,7 +975,7 @@ síntoma solo apareció consultando la base directamente. Vale la pena, ante un 
 no se está comportando como debería", chequear el estado real en Supabase (`execute_sql`,
 `get_logs`) antes de asumir dónde está el bug.
 
-### Fase 10 — Contenido y configuración (mayor impacto en percepción de pulido)
+### Fase 10 — Contenido y configuración (mayor impacto en percepción de pulido) — ✅ hecha
 *Impacto: medio-alto. Dificultad: media. Dependencias: ninguna técnica.*
 
 Decisión ya tomada (confirmada por vos): pantalla de Ajustes **app-wide**. Sin control de tema
@@ -983,10 +983,16 @@ claro/oscuro (§5.2 — esa decisión sigue en pie, ya anotada en el código).
 
 | Subtarea | Dificultad | Nota |
 |---|---|---|
-| 10.1 Pantalla de Ajustes app-wide (sonido/música/háptica, colgada del Drawer, sin toggle de tema) | Media-Alta | |
-| 10.2 Música ambiental + toggle separado | Media | Depende de 10.1 para dónde vive el toggle |
-| 10.3 Pantalla "Reglas y ayuda" reutilizando contenido del tutorial (§6.2) | Media | Diagramas vía capturas de `MesaPool`, no arte nuevo |
-| 10.4 Invitaciones: solo la más reciente <10 min + X para descartar (§7.2) | Baja | Cambio acotado a `pool-online.tsx` |
+| ✅ 10.1 Pantalla de Ajustes app-wide (sonido/música/háptica, colgada del Drawer, sin toggle de tema) | Media-Alta | `app/ajustes.tsx` nuevo, entrada en `DrawerContent.tsx`. De paso se adelantó **12.6** (separar el flag de háptica del de sonido, `@timba:pool_haptica` propio) porque si no el tercer toggle de la pantalla no controlaba nada real |
+| ✅ 10.2 Música ambiental + toggle separado | Media | `src/lib/pool/musica.ts` nuevo (`useMusicaPool`), se engancha en `animar()` de `partida-pool.tsx`: baja el volumen mientras corre la animación de un tiro, lo restaura al terminar. `assets/pool-assets/musica/ambiente.wav` es un placeholder SINTETIZADO (pad de 4 tonos + tremolo lento, frecuencias elegidas como n/duración para que el loop cierre exacto sin click) — reemplazable por un sample CC0 con el mismo nombre. Default OFF (`@timba:pool_musica`), a diferencia de los efectos |
+| ✅ 10.3 Pantalla "Reglas y ayuda" reutilizando contenido del tutorial (§6.2) | Media | `app/juegos/reglas-pool.tsx` nuevo, entrada en el menú de Pool. Reutiliza `LECCIONES.find(id==='las_reglas')` (el quiz) como lista de referencia estática + sección nueva de consejos. **Sin diagramas de mesa** (quedó fuera de alcance a propósito, ver nota abajo) y **sin ícono `?` dentro de la partida** — el header de `partida-pool.tsx` ya tiene poco margen en pantallas angostas (motivo de un fix anterior, ver §11.2/decisión 7) y no vale la pena arriesgar otro overflow por un acceso que ya existe desde el menú |
+| ✅ 10.4 Invitaciones: solo la más reciente <10 min + X para descartar (§7.2) | Baja | `pool-online.tsx`: ventana de 48h→10min, dedupe por emisor (se queda con la más nueva de cada uno), se muestra una sola card (`invitacionVisible`, derivada filtrando un set de descartadas contra la lista de candidatos — al descartar aparece sola la siguiente, sin lógica extra de "avanzar"). El descarte persiste en AsyncStorage (no en una tabla nueva — alcanza para lo que pedía la spec) |
+
+**No verificado visualmente en el preview de este roundtrip**: las pantallas nuevas (Ajustes,
+Reglas y ayuda, invitación con X) están todas detrás de login y no había una sesión guardada en
+el navegador del preview — `tsc --noEmit` limpio y los 66 tests del motor pasan, pero la
+verificación visual real queda pendiente de que la pruebes vos en la app (o me pases una forma de
+loguearme en el preview).
 
 ### Fase 11 — Centro de invitaciones (decisión de alcance app-wide, §9)
 *Impacto: medio (hoy funciona, aunque triplicado). Dificultad: alta si es la versión completa. Dependencias: ninguna.*
@@ -1005,7 +1011,7 @@ claro/oscuro (§5.2 — esa decisión sigue en pie, ya anotada en el código).
 | 12.3 Simplificar `comunicarResultado()` (§11.1) | Baja |
 | 12.4 Timer reconciliado contra `updated_at` del servidor, no solo `setInterval` local (§11.1) | Media |
 | 12.5 Sacar/proteger ruta de `debug-pool.tsx` antes de producción | Baja |
-| 12.6 Separar flag de háptica del de sonido | Baja |
+| ~~12.6 Separar flag de háptica del de sonido~~ | **✅ Adelantado en Fase 10.1** |
 | 12.7 Confirmar que `palo_pool_1.png`/`_2.png` estén trackeados en git | Baja |
 | 12.8 Replay del último tiro (mejora no pedida, §11.3) | Baja |
 | 12.9 Stats de Pool en el perfil (mejora no pedida, §11.3) | Media |

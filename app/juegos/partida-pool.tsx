@@ -25,6 +25,7 @@ import MesaPoolLazy from '@/components/pool/MesaPoolLazy'
 import ControlFuerza from '@/components/pool/ControlFuerza'
 import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
 import { useSonidoPool } from '@/lib/pool/sonido'
+import { useMusicaPool } from '@/lib/pool/musica'
 import { haptica } from '@/lib/pool/haptica'
 import { CLAVE_TACO_SKIN, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
 import { CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NivelAsistencia } from '@/lib/pool/asistencia'
@@ -138,10 +139,15 @@ export default function PartidaPool() {
   const [msg, setMsg] = useState<string | null>(null)
   const [anchoMesa, setAnchoMesa] = useState(0)
   const [sonido, setSonido] = useState(true)
+  const [musica, setMusica] = useState(false)
+  const [hapticaOn, setHapticaOn] = useState(true)
   const zonaRef = useRef<View>(null)
   const sonidoRef = useRef(true)
   sonidoRef.current = sonido
+  const hapticaRef = useRef(true)
+  hapticaRef.current = hapticaOn
   const sfx = useSonidoPool(sonido)
+  const musicaAmbiente = useMusicaPool(musica)
 
   const rafRef = useRef<number | null>(null)
   const botTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -180,6 +186,8 @@ export default function PartidaPool() {
 
   useEffect(() => {
     AsyncStorage.getItem('@timba:pool_sonido').then(v => { if (v === '0') setSonido(false) })
+    AsyncStorage.getItem('@timba:pool_musica').then(v => { if (v === '1') setMusica(true) })
+    AsyncStorage.getItem('@timba:pool_haptica').then(v => { if (v === '0') setHapticaOn(false) })
     AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
       if (v && OPCIONES_TACO.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
     })
@@ -213,11 +221,11 @@ export default function PartidaPool() {
   function feedback(resultado: { ganador: Jugador | null; faltas: Falta[] }) {
     const yo = esOnline ? miJugador : HUMANO
     if (resultado.ganador) {
-      if (resultado.ganador === yo) { sfx.simple('win'); if (sonidoRef.current) haptica.victoria() }
-      else if (sonidoRef.current) haptica.falta()
+      if (resultado.ganador === yo) { sfx.simple('win'); if (hapticaRef.current) haptica.victoria() }
+      else if (hapticaRef.current) haptica.falta()
     } else if (resultado.faltas.length > 0) {
       sfx.simple('foul', 0.7)
-      if (sonidoRef.current) haptica.falta()
+      if (hapticaRef.current) haptica.falta()
     }
   }
 
@@ -444,7 +452,8 @@ export default function PartidaPool() {
     setAnimando(true)
     // sonido agendado por los timestamps de los eventos + tacazo/vibración inicial
     sfx.reproducirTiro(res)
-    if (sonidoRef.current) haptica.golpe()
+    musicaAmbiente.reducir() // no tapar los efectos mientras corre la animación
+    if (hapticaRef.current) haptica.golpe()
     const huboEmboque = res.eventos.some(e => e.tipo === 'tronera' && e.bola !== 0)
     const t0 = performance.now()
     const paso = () => {
@@ -456,7 +465,8 @@ export default function PartidaPool() {
       } else {
         setMuestra(null)
         setAnimando(false)
-        if (sonidoRef.current && huboEmboque) haptica.tronera()
+        musicaAmbiente.restaurar()
+        if (hapticaRef.current && huboEmboque) haptica.tronera()
         alTerminar()
       }
     }

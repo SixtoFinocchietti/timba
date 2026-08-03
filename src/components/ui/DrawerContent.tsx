@@ -11,6 +11,7 @@ const ITEMS: { name: string; label: string; icono: IconName; ruta: string }[] = 
   { name: 'juegos', label: 'Juegos', icono: 'juegos', ruta: '/juegos' },
   { name: 'amigos', label: 'Amigos', icono: 'amigos', ruta: '/(tabs)/amigos' },
   { name: 'perfil', label: 'Perfil', icono: 'perfil', ruta: '/(tabs)/perfil' },
+  { name: 'ajustes', label: 'Ajustes', icono: 'ajustes', ruta: '/ajustes' },
 ]
 
 export default function DrawerContent(props: any) {
