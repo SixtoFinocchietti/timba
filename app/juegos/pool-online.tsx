@@ -3,7 +3,7 @@
 // selecciona un amigo y la invitación viaja como mensaje de chat
 // 'invitacion_pool' (card con Unirse) + aparece acá para el invitado.
 
-import { useState, useEffect } from 'react'
+import { useState, useEffect, useMemo } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal,
   TextInput, FlatList, ActivityIndicator, Pressable, Alert,
@@ -16,19 +16,12 @@ import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { TimbaTipo } from '@/types'
+import { useInvitacionesPendientes, InvitacionPendiente } from '@/hooks/useInvitacionesPendientes'
 
 type SerieVal = 1 | 3
 type TimerVal = 0 | 30 | 45 | 60
 
 type Amigo = { id: string; nombre: string }
-
-type InvPool = {
-  id: string
-  emisor_id: string
-  contenido: string
-  created_at: string
-  emisorNombre: string
-}
 
 // Timba pre-comprometida antes de jugar (feedback de juego real, jul 2026):
 // antes se creaba DESPUÉS de terminar el partido, lo que permitía que el
@@ -63,7 +56,20 @@ export default function PoolOnlineConfig() {
   const [busqueda, setBusqueda] = useState('')
   const [amigos, setAmigos] = useState<Amigo[]>([])
   const [cargando, setCargando] = useState(false)
-  const [invitaciones, setInvitaciones] = useState<InvPool[]>([])
+  // ventana corta + dedupe por emisor son específicos de Pool (spec §7.2 —
+  // una invitación a jugar pierde sentido rápido); Blackjack/Poker usan el
+  // hook con su comportamiento de siempre (48h, sin dedupe)
+  const { invitaciones: candidatosInv } = useInvitacionesPendientes('invitacion_pool', {
+    ventanaMs: VENTANA_INVITACION_MS, limite: 20,
+  })
+  const invitaciones = useMemo(() => {
+    const vistos = new Set<string>()
+    return candidatosInv.filter(m => {
+      if (vistos.has(m.emisor_id)) return false
+      vistos.add(m.emisor_id)
+      return true
+    })
+  }, [candidatosInv])
   const [descartadas, setDescartadas] = useState<Set<string>>(new Set())
   const invitacionVisible = invitaciones.find(inv => !descartadas.has(inv.id)) ?? null
 
@@ -88,59 +94,6 @@ export default function PoolOnlineConfig() {
   const [timbaPremio, setTimbaPremio] = useState('')
   const [timbaPrenda, setTimbaPrenda] = useState('')
   const [timbaMonto, setTimbaMonto] = useState('')
-
-  useEffect(() => {
-    if (!usuario?.id) return
-    cargarInvitaciones()
-    const canal = supabase
-      .channel(`pool-lobby-${usuario.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'mensajes',
-        filter: `receptor_id=eq.${usuario.id}`,
-      }, (payload: any) => {
-        if (payload.new?.tipo === 'invitacion_pool') cargarInvitaciones()
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(canal) }
-  }, [usuario?.id])
-
-  async function cargarInvitaciones() {
-    if (!usuario?.id) return
-    const desde = new Date(Date.now() - VENTANA_INVITACION_MS).toISOString()
-    const { data: msgs } = await supabase
-      .from('mensajes')
-      .select('id, emisor_id, contenido, created_at')
-      .eq('receptor_id', usuario.id)
-      .eq('tipo', 'invitacion_pool')
-      .gte('created_at', desde)
-      .order('created_at', { ascending: false })
-      .limit(20)
-
-    // solo la más reciente por emisor distinto — ya viene ordenado desc,
-    // así que la primera vez que aparece cada emisor es su invitación más nueva
-    const vistos = new Set<string>()
-    const unicos = (msgs as any[] ?? []).filter((m: any) => {
-      if (vistos.has(m.emisor_id)) return false
-      vistos.add(m.emisor_id)
-      return true
-    })
-
-    if (!unicos.length) { setInvitaciones([]); return }
-
-    const emisorIds = [...new Set(unicos.map((m: any) => m.emisor_id))]
-    const { data: users } = await supabase
-      .from('usuarios_publicos')
-      .select('id, nombre')
-      .in('id', emisorIds)
-
-    const nameMap: Record<string, string> = Object.fromEntries(
-      (users ?? []).map((u: any) => [u.id, u.nombre])
-    )
-    setInvitaciones(unicos.map((m: any) => ({
-      ...m,
-      emisorNombre: nameMap[m.emisor_id] ?? 'Amigo',
-    })))
-  }
 
   async function cargarAmigos() {
     if (!usuario?.id) return
@@ -229,7 +182,7 @@ export default function PoolOnlineConfig() {
     } as any)
   }
 
-  function unirse(inv: InvPool) {
+  function unirse(inv: InvitacionPendiente) {
     let cfg = { serie: 1, timer: 45, hostId: inv.emisor_id, hostNombre: inv.emisorNombre, timbaId: null as string | null }
     try { Object.assign(cfg, JSON.parse(inv.contenido)) } catch {}
     router.push({

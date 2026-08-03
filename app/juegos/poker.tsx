@@ -1,4 +1,4 @@
-import { useState, useEffect } from 'react'
+import { useState } from 'react'
 import {
   View, Text, StyleSheet, TouchableOpacity, Modal,
   TextInput, FlatList, ScrollView, ActivityIndicator,
@@ -10,20 +10,13 @@ import { useAuthStore } from '@/store/authStore'
 import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
+import { useInvitacionesPendientes } from '@/hooks/useInvitacionesPendientes'
 
 type Modo = 'turno' | 'vivo'
 type Limite = 'limitadas' | 'bote' | 'sinLimite'
 type FichasVal = 5000 | 10000 | 20000
 
 type Amigo = { id: string; nombre: string }
-
-type InvPoker = {
-  id: string
-  emisor_id: string
-  contenido: string
-  created_at: string
-  emisorNombre: string
-}
 
 const INV_LIMITE_LABELS: Record<string, string> = { limitadas: 'Limitadas', bote: 'Al bote', sinLimite: 'Sin límite' }
 const INV_MODO_LABELS: Record<string, string> = { turno: 'Turno', vivo: 'En vivo' }
@@ -43,51 +36,7 @@ export default function PokerConfig() {
   const [amigos, setAmigos] = useState<Amigo[]>([])
   const [cargando, setCargando] = useState(false)
   const [seleccionado, setSeleccionado] = useState<Amigo | null>(null)
-  const [invitaciones, setInvitaciones] = useState<InvPoker[]>([])
-
-  useEffect(() => {
-    if (!usuario?.id) return
-    cargarInvitaciones()
-    const canal = supabase
-      .channel(`poker-lobby-${usuario.id}`)
-      .on('postgres_changes', {
-        event: 'INSERT', schema: 'public', table: 'mensajes',
-        filter: `receptor_id=eq.${usuario.id}`,
-      }, (payload: any) => {
-        if (payload.new?.tipo === 'invitacion_poker') cargarInvitaciones()
-      })
-      .subscribe()
-    return () => { supabase.removeChannel(canal) }
-  }, [usuario?.id])
-
-  async function cargarInvitaciones() {
-    if (!usuario?.id) return
-    const hace48h = new Date(Date.now() - 48 * 60 * 60 * 1000).toISOString()
-    const { data: msgs } = await supabase
-      .from('mensajes')
-      .select('id, emisor_id, contenido, created_at')
-      .eq('receptor_id', usuario.id)
-      .eq('tipo', 'invitacion_poker')
-      .gte('created_at', hace48h)
-      .order('created_at', { ascending: false })
-      .limit(5)
-
-    if (!msgs?.length) { setInvitaciones([]); return }
-
-    const emisorIds = [...new Set((msgs as any[]).map((m: any) => m.emisor_id))]
-    const { data: users } = await supabase
-      .from('usuarios_publicos')
-      .select('id, nombre')
-      .in('id', emisorIds)
-
-    const nameMap: Record<string, string> = Object.fromEntries(
-      (users ?? []).map((u: any) => [u.id, u.nombre])
-    )
-    setInvitaciones((msgs as any[]).map((m: any) => ({
-      ...m,
-      emisorNombre: nameMap[m.emisor_id] ?? 'Amigo',
-    })))
-  }
+  const { invitaciones } = useInvitacionesPendientes('invitacion_poker')
 
   async function cargarAmigos() {
     if (!usuario?.id) return

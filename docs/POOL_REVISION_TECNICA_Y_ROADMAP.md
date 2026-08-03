@@ -1004,12 +1004,23 @@ con `onSlidingComplete` (no en cada pixel de drag) para no saturar AsyncStorage.
 deshabilita visualmente cuando su toggle está apagado (no tiene sentido ajustar el volumen de
 algo que no está sonando).
 
-### Fase 11 — Centro de invitaciones (decisión de alcance app-wide, §9)
+### Fase 11 — Centro de invitaciones (decisión de alcance app-wide, §9) — ✅ paso 1 hecho
 *Impacto: medio (hoy funciona, aunque triplicado). Dificultad: alta si es la versión completa. Dependencias: ninguna.*
 
 **Camino incremental recomendado** (§9.2): empezar por el hook compartido
 `useInvitacionesPendientes`, que ya mata la triplicación de código sin rediseñar UI; la pantalla
 única + `expira_en` en base queda como paso 2 cuando/si se decide invertir en eso.
+
+✅ **Paso 1 hecho**: `src/hooks/useInvitacionesPendientes.ts` nuevo — recibe `tipo` (ej.
+`'invitacion_blackjack'`) y opcionalmente `{ventanaMs, limite}`, resuelve la query + el canal
+realtime + el mapeo de nombres, devuelve `{invitaciones, recargar}`. `blackjack.tsx` y
+`poker.tsx` lo adoptan tal cual (mismo comportamiento de siempre: 48h, límite 5, sin dedupe — cero
+cambio de UI). `pool-online.tsx` también lo adopta, pasándole su ventana corta de 10 min
+(Fase 10.4); el dedupe-por-emisor y el descarte con X siguen siendo lógica propia de Pool encima
+del hook (no se generalizaron porque Blackjack/Poker no los pidieron — no hay que imponerles un
+comportamiento que no eligieron). `truco.tsx` no usa este patrón de invitaciones en absoluto, no
+se tocó. **Paso 2 (pantalla única + `expira_en` en base) queda pendiente**, sin decisión tomada
+de si vale la pena — es la parte cara de esta fase y no fue pedida todavía.
 
 ### Fase 12 — Expo Go / Samsung + limpieza general
 *Impacto: medio-alto (bug puntual ya diagnosticado, fix de bajo riesgo) + varios. Dificultad: baja-media cada ítem. Dependencias: ninguna, se pueden hacer en paralelo con cualquier otra fase.*
