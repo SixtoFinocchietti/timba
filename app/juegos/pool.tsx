@@ -6,6 +6,11 @@ import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { CLAVE_PROGRESO, LECCIONES } from '@/lib/pool/tutorial'
+import {
+  CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NIVELES_ASISTENCIA, NivelAsistencia,
+} from '@/lib/pool/asistencia'
+import { CLAVE_TACO_SKIN, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
+import SelectorSkins from '@/components/pool/SelectorSkins'
 
 // Menú del Pool (spec §2.1). Fases 2-3: práctica libre y 8-ball vs Bot;
 // tutorial y online llegan en las fases 4-5 — se muestran como próximamente
@@ -18,6 +23,7 @@ const MODOS: {
   disponible: boolean
 }[] = [
   { id: 'tutorial', nombre: 'Tutorial', descripcion: 'Aprendé controles, reglas y efectos en 3 minutos', disponible: true },
+  { id: 'reglas', nombre: 'Reglas y ayuda', descripcion: 'Consulta rápida: faltas, cuándo tirarle a la 8, consejos', disponible: true },
   { id: 'practica', nombre: 'Práctica libre', descripcion: 'Mesa sola, sin reglas: tirá y probá efectos', disponible: true },
   { id: 'bot', nombre: 'Jugar vs Bot', descripcion: '8-Ball con reglas · Fácil, Normal o Difícil', disponible: true },
   { id: 'amigo', nombre: 'Con un amigo', descripcion: 'Partida online con invitación por chat', disponible: true },
@@ -37,18 +43,29 @@ export default function PoolMenu() {
   const c = useColores()
   const es = makeEstilos(c)
   const [sheetBot, setSheetBot] = useState(false)
+  const [sheetAjustes, setSheetAjustes] = useState(false)
+  const [skinsAbierto, setSkinsAbierto] = useState(false)
   const [progresoTutorial, setProgresoTutorial] = useState(0)
+  const [nivelAsistencia, setNivelAsistencia] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
+  const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
 
   useFocusEffect(
     useCallback(() => {
       AsyncStorage.getItem(CLAVE_PROGRESO).then(v => {
         setProgresoTutorial(v ? (JSON.parse(v) as string[]).length : 0)
       })
+      AsyncStorage.getItem(CLAVE_NIVEL_ASISTENCIA).then(v => {
+        if (v === 'sin' || v === 'baja' || v === 'normal' || v === 'maxima') setNivelAsistencia(v)
+      })
+      AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
+        if (v && OPCIONES_TACO.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+      })
     }, []),
   )
 
   function abrir(id: string) {
     if (id === 'tutorial') router.push('/juegos/tutorial-pool' as any)
+    if (id === 'reglas') router.push('/juegos/reglas-pool' as any)
     if (id === 'practica') router.push('/juegos/partida-pool' as any)
     if (id === 'bot') setSheetBot(true)
     if (id === 'amigo') router.push('/juegos/pool-online' as any)
@@ -60,11 +77,24 @@ export default function PoolMenu() {
     router.push({ pathname: '/juegos/partida-pool', params: { modo: 'bot', dificultad } } as any)
   }
 
+  function elegirNivelAsistencia(id: NivelAsistencia) {
+    setNivelAsistencia(id)
+    AsyncStorage.setItem(CLAVE_NIVEL_ASISTENCIA, id)
+  }
+
+  function elegirTacoSkin(id: string) {
+    setTacoSkin(id as TacoSkinId)
+    AsyncStorage.setItem(CLAVE_TACO_SKIN, id)
+  }
+
   return (
     <View style={[es.contenedor, { backgroundColor: c.fondo }]}>
-      <View style={es.header}>
+      <View style={[es.header, es.headerFila]}>
         <TouchableOpacity onPress={() => router.back()} activeOpacity={0.7}>
           <Text style={[es.volver, { color: c.primario }]}>‹ Volver</Text>
+        </TouchableOpacity>
+        <TouchableOpacity onPress={() => setSheetAjustes(true)} activeOpacity={0.7} hitSlop={10}>
+          <AppIcon name="ajustes" size={22} color={c.textoSuave} />
         </TouchableOpacity>
       </View>
 
@@ -133,6 +163,62 @@ export default function PoolMenu() {
           ))}
         </View>
       </Modal>
+
+      {/* Bottom sheet: ajustes propios de Pool (spec §2.4, auditoría técnica
+          jul 2026) — separado de un futuro "Ajustes" app-wide: acá vive solo
+          lo que no tiene sentido fuera de este juego (nivel de asistencia,
+          taco). El sonido/música quedan para la pantalla de Ajustes general
+          cuando exista, no se duplican acá. */}
+      <Modal visible={sheetAjustes} transparent animationType="slide" onRequestClose={() => setSheetAjustes(false)}>
+        <Pressable style={es.sheetOverlay} onPress={() => setSheetAjustes(false)} />
+        <View style={[es.sheet, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+          <View style={[es.sheetHandle, { backgroundColor: c.borde }]} />
+          <Text style={[es.sheetTitulo, { color: c.texto }]}>Ajustes de Pool</Text>
+
+          <Text style={[es.sheetSeccion, { color: c.textoSuave }]}>ASISTENCIA AL APUNTADO</Text>
+          {NIVELES_ASISTENCIA.map(n => (
+            <TouchableOpacity
+              key={n.id}
+              style={[
+                es.sheetOpcionChica,
+                { backgroundColor: c.fondoInput, borderColor: n.id === nivelAsistencia ? c.primario : c.borde },
+              ]}
+              onPress={() => elegirNivelAsistencia(n.id)}
+              activeOpacity={0.8}
+            >
+              <View style={es.sheetOpcionTexto}>
+                <Text style={[es.sheetOpcionNombre, { color: c.texto }]}>{n.nombre}</Text>
+                <Text style={[es.sheetOpcionDesc, { color: c.textoSuave }]}>{n.descripcion}</Text>
+              </View>
+              {n.id === nivelAsistencia && <Text style={{ color: c.primario, fontSize: 18, fontWeight: '800' }}>✓</Text>}
+            </TouchableOpacity>
+          ))}
+
+          <Text style={[es.sheetSeccion, { color: c.textoSuave, marginTop: 14 }]}>TACO</Text>
+          <TouchableOpacity
+            style={[es.sheetOpcionChica, { backgroundColor: c.fondoInput, borderColor: c.borde }]}
+            onPress={() => setSkinsAbierto(true)}
+            activeOpacity={0.8}
+          >
+            <View style={es.sheetOpcionTexto}>
+              <Text style={[es.sheetOpcionNombre, { color: c.texto }]}>
+                {OPCIONES_TACO.find(t => t.id === tacoSkin)?.nombre ?? 'Taco'}
+              </Text>
+              <Text style={[es.sheetOpcionDesc, { color: c.textoSuave }]}>Toca para elegir tu taco por defecto</Text>
+            </View>
+            <Text style={[es.chevron, { color: c.textoSuave }]}>›</Text>
+          </TouchableOpacity>
+        </View>
+      </Modal>
+
+      <SelectorSkins
+        visible={skinsAbierto}
+        titulo="Elegí tu taco"
+        opciones={OPCIONES_TACO}
+        seleccionado={tacoSkin}
+        onCerrar={() => setSkinsAbierto(false)}
+        onElegir={elegirTacoSkin}
+      />
     </View>
   )
 }
@@ -141,6 +227,7 @@ function makeEstilos(c: ColoresTema) {
   return StyleSheet.create({
     contenedor: { flex: 1 },
     header: { paddingHorizontal: 24, paddingTop: 56, paddingBottom: 8 },
+    headerFila: { flexDirection: 'row', alignItems: 'center', justifyContent: 'space-between' },
     volver: { fontSize: 18, fontWeight: '700' },
     tituloFila: {
       flexDirection: 'row', alignItems: 'center', gap: 12,
@@ -169,9 +256,14 @@ function makeEstilos(c: ColoresTema) {
     sheetHandle: { width: 40, height: 5, borderRadius: 3, alignSelf: 'center', marginBottom: 16 },
     sheetTitulo: { fontSize: 20, fontWeight: '800', textAlign: 'center' },
     sheetSubtitulo: { fontSize: 14, textAlign: 'center', marginTop: 4, marginBottom: 20 },
+    sheetSeccion: { fontSize: 11, fontWeight: '800', letterSpacing: 1, marginTop: 20, marginBottom: 8 },
     sheetOpcion: {
       flexDirection: 'row', alignItems: 'center', gap: 14,
       borderRadius: 16, padding: 16, borderWidth: 1, marginBottom: 12,
+    },
+    sheetOpcionChica: {
+      flexDirection: 'row', alignItems: 'center', gap: 12,
+      borderRadius: 14, padding: 14, borderWidth: 1.5, marginBottom: 10,
     },
     sheetIcono: {
       width: 44, height: 44, borderRadius: 12, borderWidth: 1,

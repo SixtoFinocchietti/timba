@@ -67,10 +67,20 @@ export default function Perfil() {
     cerrada_en?: string
     resultado: 'ganaste' | 'perdiste' | 'neutral'
   }
+  type PoolStats = {
+    jugadas: number
+    ganadas: number
+    perdidas: number
+    rachaActual: number
+  }
   const [historial, setHistorial] = useState<HistorialItem[]>([])
+  const [poolStats, setPoolStats] = useState<PoolStats | null>(null)
   const [mostrarTodoHistorial, setMostrarTodoHistorial] = useState(false)
 
-  useEffect(() => { cargarHistorial() }, [usuario?.id])
+  useEffect(() => {
+    cargarHistorial()
+    cargarStatsPool()
+  }, [usuario?.id])
 
   async function cargarHistorial() {
     if (!usuario?.id) return
@@ -101,6 +111,40 @@ export default function Perfil() {
         new Date(b.cerrada_en ?? b.created_at).getTime() - new Date(a.cerrada_en ?? a.created_at).getTime()
       )
     )
+  }
+
+  // Stats propias de Pool: no dependen de que haya Timba ni de que esta sea
+  // monetaria. Una desconexión técnica no cuenta como victoria/derrota: la
+  // partida pudo cancelarse por un problema de red, no por un resultado real.
+  async function cargarStatsPool() {
+    if (!usuario?.id) { setPoolStats(null); return }
+    const { data, error } = await supabase
+      .from('partidas_pool')
+      .select('host_id, invitado_id, fase, motivo_abandono, ganador_serie, updated_at')
+      .or(`host_id.eq.${usuario.id},invitado_id.eq.${usuario.id}`)
+      .in('fase', ['terminada', 'abandonada'])
+      .order('updated_at', { ascending: false })
+
+    if (error) { setPoolStats(null); return }
+    const resueltas = (data ?? []).filter((p: any) =>
+      p.ganador_serie && (p.fase === 'terminada' || p.motivo_abandono === 'voluntario')
+    )
+    let ganadasPool = 0
+    let racha = 0
+    let rachaAbierta = true
+    for (const p of resueltas as any[]) {
+      const miAsiento = p.host_id === usuario.id ? 'host' : 'invitado'
+      const gane = p.ganador_serie === miAsiento
+      if (gane) ganadasPool++
+      if (rachaAbierta && gane) racha++
+      else rachaAbierta = false
+    }
+    setPoolStats({
+      jugadas: resueltas.length,
+      ganadas: ganadasPool,
+      perdidas: resueltas.length - ganadasPool,
+      rachaActual: racha,
+    })
   }
 
   function iniciarEdicion() {
@@ -359,7 +403,7 @@ export default function Perfil() {
           <View style={[es.linea, { backgroundColor: c.texto }]} />
         </TouchableOpacity>
         <Text style={[es.tituloPag, { color: c.texto }]}>Perfil</Text>
-        {/* Para reactivar modo claro: descomentar este botón */}
+        {/* Modo claro oculto a pedido del Jefe del proyecto (ver ThemeContext.tsx) — descomentar para reactivar */}
         {/* <TouchableOpacity
           onPress={cambiarTema}
           style={[es.btnTema, { backgroundColor: c.fondoCard, borderColor: c.borde }]}
@@ -430,6 +474,36 @@ export default function Perfil() {
               </Text>
             </View>
           )}
+        </View>
+      )}
+
+      {/* Estadísticas separadas de Pool: las timbas y las partidas casuales
+          comparten esta tabla, así que el porcentaje no queda sesgado por
+          quién eligió crear una Timba. */}
+      {poolStats && poolStats.jugadas > 0 && (
+        <View style={[es.card, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+          <Text style={{ color: c.textoSuave, fontSize: 11, fontWeight: '700', textTransform: 'uppercase', letterSpacing: 1 }}>
+            Pool · 8-Ball
+          </Text>
+          <View style={{ flexDirection: 'row', gap: 10 }}>
+            <View style={[es.statBox, { backgroundColor: c.primario + '18', borderColor: c.primario + '44', flex: 1 }]}>
+              <Text style={{ color: c.primario, fontSize: 24, fontWeight: '900' }}>{poolStats.jugadas}</Text>
+              <Text style={{ color: c.primario + 'BB', fontSize: 12, fontWeight: '600' }}>Partidas</Text>
+            </View>
+            <View style={[es.statBox, { backgroundColor: c.exito + '18', borderColor: c.exito + '44', flex: 1 }]}>
+              <Text style={{ color: c.exito, fontSize: 24, fontWeight: '900' }}>
+                {Math.round((poolStats.ganadas / poolStats.jugadas) * 100)}%
+              </Text>
+              <Text style={{ color: c.exito + 'BB', fontSize: 12, fontWeight: '600' }}>Victorias</Text>
+            </View>
+            <View style={[es.statBox, { backgroundColor: c.fondoInput, borderColor: c.borde, flex: 1 }]}>
+              <Text style={{ color: c.texto, fontSize: 24, fontWeight: '900' }}>{poolStats.rachaActual}</Text>
+              <Text style={{ color: c.textoSuave, fontSize: 12, fontWeight: '600' }}>Racha</Text>
+            </View>
+          </View>
+          <Text style={{ color: c.textoSuave, fontSize: 12, textAlign: 'center', marginTop: 8 }}>
+            {poolStats.ganadas} ganadas · {poolStats.perdidas} perdidas
+          </Text>
         </View>
       )}
 

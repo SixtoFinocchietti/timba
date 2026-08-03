@@ -149,6 +149,7 @@ export default function NuevaTimba() {
     if (selectError || !data) { Alert.alert('Error al cargar la timba', selectError?.message ?? 'Sin datos'); setCargando(false); return }
 
     await supabase.from('participantes').insert({ timba_id: data.id, usuario_id: userId, opcion_elegida: null })
+
     setCargando(false)
     router.replace(`/timba/${data.id}`)
   }

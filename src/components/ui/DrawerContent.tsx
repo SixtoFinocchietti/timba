@@ -5,12 +5,15 @@ import { useAuthStore } from '@/store/authStore'
 import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon, IconName } from '@/components/ui/AppIcon'
+import { useInvitacionesPendientes, TIPOS_INVITACION } from '@/hooks/useInvitacionesPendientes'
 
 const ITEMS: { name: string; label: string; icono: IconName; ruta: string }[] = [
   { name: 'home', label: 'Timbas', icono: 'timba', ruta: '/(tabs)/home' },
   { name: 'juegos', label: 'Juegos', icono: 'juegos', ruta: '/juegos' },
   { name: 'amigos', label: 'Amigos', icono: 'amigos', ruta: '/(tabs)/amigos' },
+  { name: 'invitaciones', label: 'Invitaciones', icono: 'recordatorio', ruta: '/invitaciones' },
   { name: 'perfil', label: 'Perfil', icono: 'perfil', ruta: '/(tabs)/perfil' },
+  { name: 'ajustes', label: 'Ajustes', icono: 'ajustes', ruta: '/ajustes' },
 ]
 
 export default function DrawerContent(props: any) {
@@ -18,6 +21,9 @@ export default function DrawerContent(props: any) {
   const c = useColores()
   const pathname = usePathname()
   const es = makeEstilos(c)
+  // badge de "Invitaciones" (Fase 11 paso 2): no resta las descartadas — es
+  // solo un indicador de "hay algo nuevo", no necesita ser exacto al pixel
+  const { invitaciones } = useInvitacionesPendientes([...TIPOS_INVITACION])
 
   function navegar(ruta: string) {
     router.push(ruta as any)
@@ -45,6 +51,11 @@ export default function DrawerContent(props: any) {
               <Text style={[es.itemLabel, { color: activo ? c.primario : c.texto }]}>
                 {item.label}
               </Text>
+              {item.name === 'invitaciones' && invitaciones.length > 0 && (
+                <View style={[es.badge, { backgroundColor: c.primario }]}>
+                  <Text style={[es.badgeTexto, { color: c.fondo }]}>{invitaciones.length}</Text>
+                </View>
+              )}
             </TouchableOpacity>
           )
         })}
@@ -85,6 +96,19 @@ function makeEstilos(c: ColoresTema) {
       fontSize: 22,
       fontWeight: '700',
       letterSpacing: -0.3,
+      flex: 1,
+    },
+    badge: {
+      minWidth: 22,
+      height: 22,
+      borderRadius: 11,
+      paddingHorizontal: 6,
+      alignItems: 'center',
+      justifyContent: 'center',
+    },
+    badgeTexto: {
+      fontSize: 12,
+      fontWeight: '800',
     },
     soporte: {
       padding: 32,

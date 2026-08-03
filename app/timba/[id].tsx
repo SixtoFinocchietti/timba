@@ -550,6 +550,15 @@ export default function DetalleTimba() {
   const [victoria, setVictoria] = useState<VictoriaInfo | null>(null)
   const estadoAnteriorRef = useRef<string | null>(null)
 
+  // Timbas de un juego (hoy: Pool) se resuelven solas, sin voto humano
+  // (ago 2026) — acá solo se detecta si hay una partida vinculada, para
+  // mostrar un estado de "se resuelve sola" en vez de la UI de votar/
+  // proponer. De paso, red de seguridad: si la partida ya terminó pero la
+  // timba sigue 'activa' (el cliente del juego nunca llegó a dispararla —
+  // p. ej. los dos cerraron la app apenas terminó), se reintenta acá.
+  // cerrar_timba_juego() es idempotente, no hace nada si ya se resolvió.
+  const [partidaPoolId, setPartidaPoolId] = useState<string | null>(null)
+
   const c = useColores()
   const es = makeEstilos(c)
 
@@ -557,6 +566,23 @@ export default function DetalleTimba() {
   const soyCreador = timba?.creador_id === userId
 
   useEffect(() => { cargar() }, [id])
+
+  useEffect(() => {
+    if (!timba) { setPartidaPoolId(null); return }
+    let vivo = true
+    supabase.from('partidas_pool')
+      .select('id, fase')
+      .eq('timba_id', timba.id)
+      .maybeSingle()
+      .then(({ data: partida }) => {
+        if (!vivo || !partida) return
+        setPartidaPoolId(partida.id)
+        if (timba.estado === 'activa' && (partida.fase === 'terminada' || partida.fase === 'abandonada')) {
+          supabase.rpc('cerrar_timba_juego', { p_partida_id: partida.id }).then(() => { if (vivo) cargar() })
+        }
+      })
+    return () => { vivo = false }
+  }, [timba?.id, timba?.estado])
 
   async function cargar() {
     setCargando(true)
@@ -746,7 +772,9 @@ export default function DetalleTimba() {
   const timbaLlena = timba.max_participantes
     ? participantes.length >= timba.max_participantes && !miParticipacion
     : false
-  const puedeVotar = timba.estado === 'activa' && !guardando &&
+  // timbas de juego (partidaPoolId) nunca se votan a mano — se resuelven
+  // solas (ver efecto arriba)
+  const puedeVotar = !partidaPoolId && timba.estado === 'activa' && !guardando &&
     (!limiteVencido || !!miParticipacion?.opcion_elegida) &&
     !timbaLlena
   const pozTotal = participantes.reduce((s, p) => s + (p.monto ?? 0), 0)
@@ -972,8 +1000,23 @@ export default function DetalleTimba() {
           })}
         </View>
 
-        {/* Proponer ganador (solo creador, solo en activa) */}
-        {soyCreador && timba.estado === 'activa' && (
+        {/* Timba de un juego (hoy: Pool) en curso — se resuelve sola, sin
+            voto humano (ago 2026). Ni votar ni proponer tienen sentido acá:
+            se reemplaza esa UI por un estado informativo para los dos. */}
+        {partidaPoolId && timba.estado === 'activa' && (
+          <View style={[es.resultadoBanner, { backgroundColor: c.primario + '15', borderColor: c.primario + '44' }]}>
+            <View style={{ flexDirection: 'row', alignItems: 'center', gap: 8 }}>
+              <AppIcon name="pool" size={16} color={c.primario} />
+              <Text style={[es.resultadoTexto, { color: c.primario }]}>Partida de Pool en curso</Text>
+            </View>
+            <Text style={{ color: c.textoSuave, fontSize: 12, textAlign: 'center', marginTop: 4 }}>
+              Esta timba se resuelve sola cuando termine la partida — nadie tiene que votar ni proponer nada.
+            </Text>
+          </View>
+        )}
+
+        {/* Proponer ganador (solo creador, solo en activa, solo timbas manuales) */}
+        {soyCreador && timba.estado === 'activa' && !partidaPoolId && (
           <View style={es.seccionGanador}>
             <Text style={es.seccionTitulo}>Proponer resultado</Text>
             <Text style={es.seccionSubtitulo}>Los participantes deberán confirmar antes de que se cierre</Text>

@@ -4,7 +4,7 @@
 
 import { useEffect, useRef, useState } from 'react'
 import { Modal, Pressable, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
-import { Gesture, GestureDetector } from 'react-native-gesture-handler'
+import { Gesture, GestureDetector, GestureHandlerRootView } from 'react-native-gesture-handler'
 import { useColores } from '@/lib/ThemeContext'
 
 export interface Spin {
@@ -53,44 +53,52 @@ export default function SelectorSpin({ visible, spin, onCerrar, onElegir }: Sele
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCerrar}>
-      <Pressable style={es.overlay} onPress={onCerrar} />
-      <View style={[es.panel, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
-        <Text style={[es.titulo, { color: c.texto }]}>Efecto</Text>
-        <Text style={[es.sub, { color: c.textoSuave }]}>Arriba sigue · abajo retrocede · costados cambian el rebote</Text>
+      {/* En Android, RNGH no reconoce gestos dentro de un Modal nativo: el Modal
+          se monta en una ventana separada del GestureHandlerRootView de la raíz
+          de la app (app/_layout.tsx). Sin este wrapper propio, el arrastre de
+          abajo no responde (bug real reportado en Expo Go/Samsung, auditoría
+          jul 2026) — cualquier otro gesto (Gesture.Pan, Tap, etc.) que se
+          agregue adentro de este Modal necesita vivir dentro de este wrapper. */}
+      <GestureHandlerRootView style={{ flex: 1 }}>
+        <Pressable style={es.overlay} onPress={onCerrar} />
+        <View style={[es.panel, { backgroundColor: c.fondoCard, borderColor: c.borde }]}>
+          <Text style={[es.titulo, { color: c.texto }]}>Efecto</Text>
+          <Text style={[es.sub, { color: c.textoSuave }]}>Arriba sigue · abajo retrocede · costados cambian el rebote</Text>
 
-        <GestureDetector gesture={pan}>
-          <View style={es.bolaWrap}>
-            <View style={[es.bola, { borderColor: c.borde }]}>
-              {/* cruz de referencia */}
-              <View style={[es.cruzV, { backgroundColor: 'rgba(0,0,0,0.12)' }]} />
-              <View style={[es.cruzH, { backgroundColor: 'rgba(0,0,0,0.12)' }]} />
-              <View
-                style={[
-                  es.punto,
-                  { backgroundColor: '#C93430', transform: [{ translateX: punto.x }, { translateY: punto.y }] },
-                ]}
-              />
+          <GestureDetector gesture={pan}>
+            <View style={es.bolaWrap}>
+              <View style={[es.bola, { borderColor: c.borde }]}>
+                {/* cruz de referencia */}
+                <View style={[es.cruzV, { backgroundColor: 'rgba(0,0,0,0.12)' }]} />
+                <View style={[es.cruzH, { backgroundColor: 'rgba(0,0,0,0.12)' }]} />
+                <View
+                  style={[
+                    es.punto,
+                    { backgroundColor: '#C93430', transform: [{ translateX: punto.x }, { translateY: punto.y }] },
+                  ]}
+                />
+              </View>
             </View>
-          </View>
-        </GestureDetector>
+          </GestureDetector>
 
-        <View style={es.fila}>
-          <TouchableOpacity
-            style={[es.boton, { borderColor: c.borde }]}
-            onPress={() => setPunto({ x: 0, y: 0 })}
-            activeOpacity={0.8}
-          >
-            <Text style={[es.botonTexto, { color: c.textoSuave }]}>Centro</Text>
-          </TouchableOpacity>
-          <TouchableOpacity
-            style={[es.botonPrimario, { backgroundColor: c.primario }]}
-            onPress={confirmar}
-            activeOpacity={0.8}
-          >
-            <Text style={[es.botonTexto, { color: c.fondo }]}>Listo</Text>
-          </TouchableOpacity>
+          <View style={es.fila}>
+            <TouchableOpacity
+              style={[es.boton, { borderColor: c.borde }]}
+              onPress={() => setPunto({ x: 0, y: 0 })}
+              activeOpacity={0.8}
+            >
+              <Text style={[es.botonTexto, { color: c.textoSuave }]}>Centro</Text>
+            </TouchableOpacity>
+            <TouchableOpacity
+              style={[es.botonPrimario, { backgroundColor: c.primario }]}
+              onPress={confirmar}
+              activeOpacity={0.8}
+            >
+              <Text style={[es.botonTexto, { color: c.fondo }]}>Listo</Text>
+            </TouchableOpacity>
+          </View>
         </View>
-      </View>
+      </GestureHandlerRootView>
     </Modal>
   )
 }

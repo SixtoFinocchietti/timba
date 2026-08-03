@@ -398,9 +398,12 @@ function chocarBolas(b1: Bola, b2: Bola, t: number, eventos: EventoFisica[], cd:
   }
 }
 
-function enBoca(b: Bola): Tronera | null {
+// Exportada para guia.ts: la guía de tiro necesita saber si un punto de
+// impacto cae en zona de boca (ahí no hay pared real — la bola cae o la
+// escupe un poste, nunca rebota limpio) para no dibujar un rebote falso.
+export function enBoca(pos: Vec2): Tronera | null {
   for (const tr of TRONERAS) {
-    if (hipot(b.pos.x - tr.centro.x, b.pos.y - tr.centro.y) < tr.boca) return tr
+    if (hipot(pos.x - tr.centro.x, pos.y - tr.centro.y) < tr.boca) return tr
   }
   return null
 }
@@ -564,7 +567,7 @@ export function simularTiro(bolasIniciales: Bola[], tiro: Tiro, opts?: OpcionesS
 
         // dentro de una boca no hay pared (puede caer o ser escupida por la ceja)
         chocarPostes(b)
-        if (!enBoca(b)) {
+        if (!enBoca(b.pos)) {
           const energia = chocarBandas(b)
           if (energia > 0) {
             const ultimo = cd.bandas.get(b.n) ?? -1

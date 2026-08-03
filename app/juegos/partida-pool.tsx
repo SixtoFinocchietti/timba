@@ -13,7 +13,7 @@
 // sin revancha automática al terminar la serie (se re-invita).
 
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { View, Text, StyleSheet, TouchableOpacity } from 'react-native'
+import { View, Text, StyleSheet, TouchableOpacity, Alert } from 'react-native'
 import { router, useLocalSearchParams } from 'expo-router'
 import AsyncStorage from '@react-native-async-storage/async-storage'
 import { Gesture, GestureDetector } from 'react-native-gesture-handler'
@@ -24,14 +24,15 @@ import { ColoresTema } from '@/lib/colores'
 import MesaPoolLazy from '@/components/pool/MesaPoolLazy'
 import ControlFuerza from '@/components/pool/ControlFuerza'
 import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
-import SelectorSkins from '@/components/pool/SelectorSkins'
 import { useSonidoPool } from '@/lib/pool/sonido'
+import { useMusicaPool } from '@/lib/pool/musica'
 import { haptica } from '@/lib/pool/haptica'
-import { CLAVE_TACO_SKIN, TACO_DEFAULT, TACOS, TacoSkinId } from '@/lib/pool/skins'
+import { CLAVE_TACO_SKIN, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
+import { CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NivelAsistencia } from '@/lib/pool/asistencia'
 import {
-  CABECERA_Y, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
+  CABECERA_Y, clonarBolas, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
 } from '@/lib/pool/fisica'
-import { Dificultad, decidirTiro } from '@/lib/pool/bot'
+import { Dificultad, decidirTiro, generarCandidatos } from '@/lib/pool/bot'
 import {
   AsientoPool, PartidaPoolFila, asientoDe, avanzarSerie, bolasDeSnapshot, jugadorDe,
 } from '@/lib/pool/online'
@@ -43,10 +44,37 @@ import { crearTransform, RELACION_ASPECTO, SENSIBILIDAD_APUNTADO } from '@/lib/p
 import { Bola, MuestraAnimacion, ResultadoSimulacion, Tiro } from '@/lib/pool/tipos'
 
 const AJUSTE_FINO = (0.25 * Math.PI) / 180
-const GRACIA_RECLAMO_MS = 90_000 // inactividad del rival para reclamar la victoria
+// Fase 9 (auditoría técnica jul 2026): gracia en DOS niveles, no una sola.
+// Nivel 1 (corto): el rival está ausente Y ya venció su propio timer de tiro
+// — se le pasa el turno (falta simple, sigue en la partida). Nivel 2 (largo):
+// ausencia sostenida — recién ahí termina la partida. Antes solo existía el
+// nivel 2 en 90s: si el desconectado era justo el que tenía el turno, su
+// timer de "30s por tiro" nunca se disparaba (corre en SU cliente, que no
+// corre en background) — el rival esperaba igual los 90s completos.
+const MARGEN_TURNO_AUSENTE_MS = 15_000 // sobre el timer_seg de la partida
+const GRACIA_RECLAMO_MS = 300_000 // 5 min de ausencia sostenida = termina la partida
 
 const HUMANO: Jugador = 'A' // en bot: humano=A, bot=B; en online: host=A
 const BOT: Jugador = 'B'
+
+interface TimbaFinal {
+  tipo: 'amistosa' | 'monetaria'
+  premio_descripcion: string | null
+  prenda_descripcion: string | null
+  monto_minimo: number | null
+  estado: 'activa' | 'en_disputa' | 'cerrada' | 'cancelada'
+  resultado_ganador: string | null
+}
+
+// El replay conserva el estado EXACTO previo y el input completo del tiro.
+// No vuelve a ejecutar reglas ni escribe a la red: solo reanima el resultado
+// que el jugador ya vio. Por ahora se ofrece en práctica y contra el bot; en
+// online habría que resolver qué hacer si llega un update remoto mientras el
+// replay está reproduciéndose.
+interface ReplayTiro {
+  bolas: Bola[]
+  tiro: Tiro
+}
 
 const NOMBRE_DIFICULTAD: Record<Dificultad, string> = {
   facil: 'Fácil', normal: 'Normal', dificil: 'Difícil',
@@ -64,15 +92,6 @@ const COLORES_RIEL: Record<number, string> = {
   1: '#F0B428', 2: '#1E5AA8', 3: '#C93430', 4: '#5B3E8F',
   5: '#E07B28', 6: '#1F7A4D', 7: '#8A3038', 8: '#161616',
 }
-
-// opciones del selector de taco: TACOS (skins.ts) es solo metadata, el
-// preview (require) tiene que ser un literal estático acá
-const IMAGENES_TACO: Record<TacoSkinId, any> = {
-  oscuro: require('../../assets/pool-assets/palo_pool_1.png'),
-  claro: require('../../assets/pool-assets/palo_pool_2.png'),
-  premium: require('../../assets/pool-assets/palo_pool.png'),
-}
-const OPCIONES_TACO = TACOS.map(t => ({ id: t.id, nombre: t.nombre, preview: IMAGENES_TACO[t.id] }))
 
 function nuevaSeed(): number {
   return (Date.now() ^ (Math.random() * 0x7fffffff)) | 0
@@ -123,15 +142,25 @@ export default function PartidaPool() {
   const [pensando, setPensando] = useState(false)
   const [bolaEnManoPractica, setBolaEnManoPractica] = useState(false)
   const [spinAbierto, setSpinAbierto] = useState(false)
-  const [skinsAbierto, setSkinsAbierto] = useState(false)
   const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
+  const [nivelAsistencia, setNivelAsistencia] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
+  const [anguloSugerido, setAnguloSugerido] = useState<number | null>(null)
+  const [ultimoReplay, setUltimoReplay] = useState<ReplayTiro | null>(null)
+  const [timbaFinal, setTimbaFinal] = useState<TimbaFinal | null>(null)
   const [msg, setMsg] = useState<string | null>(null)
   const [anchoMesa, setAnchoMesa] = useState(0)
   const [sonido, setSonido] = useState(true)
+  const [musica, setMusica] = useState(false)
+  const [hapticaOn, setHapticaOn] = useState(true)
+  const [volumenSonido, setVolumenSonido] = useState(1)
+  const [volumenMusica, setVolumenMusica] = useState(1)
   const zonaRef = useRef<View>(null)
   const sonidoRef = useRef(true)
   sonidoRef.current = sonido
-  const sfx = useSonidoPool(sonido)
+  const hapticaRef = useRef(true)
+  hapticaRef.current = hapticaOn
+  const sfx = useSonidoPool(sonido, volumenSonido)
+  const musicaAmbiente = useMusicaPool(musica, volumenMusica)
 
   const rafRef = useRef<number | null>(null)
   const botTimer = useRef<ReturnType<typeof setTimeout> | null>(null)
@@ -152,6 +181,8 @@ export default function PartidaPool() {
   filaRef.current = fila
   const animandoRef = useRef(false)
   animandoRef.current = animando
+  const rivalPresenteRef = useRef(true)
+  rivalPresenteRef.current = rivalPresente
   const pendienteRef = useRef<PartidaPoolFila | null>(null) // update remoto llegado durante animación
 
   // online: mi asiento y mi jugador de reglas
@@ -159,6 +190,15 @@ export default function PartidaPool() {
     ? (fila.host_id === usuario.id ? 'host' : 'invitado')
     : null
   const miJugador: Jugador = esOnline ? (miAsiento ? jugadorDe(miAsiento) : 'A') : HUMANO
+
+  // Hándicap por jugador (Fase 8.2): en online, el nivel de asistencia lo
+  // fijó el host al invitar y queda pegado a MI asiento durante todo el
+  // partido — reemplaza el default personal (que sigue rigiendo en
+  // práctica/bot, donde no hay handicap que respetar).
+  const nivelAsistenciaEfectivo: NivelAsistencia =
+    esOnline && fila && miAsiento
+      ? (miAsiento === 'host' ? fila.asistencia_host : fila.asistencia_invitado)
+      : nivelAsistencia
 
   useEffect(() => () => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
@@ -168,14 +208,29 @@ export default function PartidaPool() {
 
   useEffect(() => {
     AsyncStorage.getItem('@timba:pool_sonido').then(v => { if (v === '0') setSonido(false) })
+    AsyncStorage.getItem('@timba:pool_musica').then(v => { if (v === '1') setMusica(true) })
+    AsyncStorage.getItem('@timba:pool_haptica').then(v => { if (v === '0') setHapticaOn(false) })
+    AsyncStorage.getItem('@timba:pool_volumen_sonido').then(v => { if (v) setVolumenSonido(parseFloat(v)) })
+    AsyncStorage.getItem('@timba:pool_volumen_musica').then(v => { if (v) setVolumenMusica(parseFloat(v)) })
     AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
-      if (v && TACOS.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+      if (v && OPCIONES_TACO.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+    })
+    AsyncStorage.getItem(CLAVE_NIVEL_ASISTENCIA).then(v => {
+      if (v === 'sin' || v === 'baja' || v === 'normal' || v === 'maxima') setNivelAsistencia(v)
     })
   }, [])
 
-  function elegirTacoSkin(id: string) {
-    setTacoSkin(id as TacoSkinId)
-    AsyncStorage.setItem(CLAVE_TACO_SKIN, id)
+  // sugerencia del bot en práctica libre (spec §3): mesa abierta, sin
+  // estado de reglas — "objetivos" son todas las bolas vivas salvo la
+  // blanca, igual a como bolasObjetivoDe() resuelve una mesa abierta.
+  // Queda dibujada hasta que se tira (o se pide otra) — feedback de juego
+  // real: el jugador la quiere de referencia mientras alinea su propio
+  // apuntado, no como un flash que desaparece apenas empieza a arrastrar.
+  function sugerirTiro() {
+    const objetivos = bolasRef.current.filter(b => b.viva && b.n !== 0).map(b => b.n)
+    const candidatos = generarCandidatos(bolasRef.current, objetivos)
+    if (candidatos.length === 0) { avisar('No hay ningún tiro viable ahora mismo'); return }
+    setAnguloSugerido(candidatos[0].angulo)
   }
 
   function toggleSonido() {
@@ -190,11 +245,11 @@ export default function PartidaPool() {
   function feedback(resultado: { ganador: Jugador | null; faltas: Falta[] }) {
     const yo = esOnline ? miJugador : HUMANO
     if (resultado.ganador) {
-      if (resultado.ganador === yo) { sfx.simple('win'); if (sonidoRef.current) haptica.victoria() }
-      else if (sonidoRef.current) haptica.falta()
+      if (resultado.ganador === yo) { sfx.simple('win'); if (hapticaRef.current) haptica.victoria() }
+      else if (hapticaRef.current) haptica.falta()
     } else if (resultado.faltas.length > 0) {
       sfx.simple('foul', 0.7)
-      if (sonidoRef.current) haptica.falta()
+      if (hapticaRef.current) haptica.falta()
     }
   }
 
@@ -261,6 +316,44 @@ export default function PartidaPool() {
     return () => { activo = false; supabase.removeChannel(canal) }
   }, [esOnline, partidaId])
 
+  // Timba pre-comprometida (spec: se resuelve sola al terminar, sin "Crear
+  // Timba" después — ver cerrar_timba_juego, migración 021). Se dispara la
+  // RPC una vez que la partida queda en un estado terminal; es idempotente
+  // (no hace nada si ya se resolvió), así que no importa si los dos
+  // clientes la llaman a la vez.
+  //
+  // Auditoría jul/ago 2026: esto falló en silencio en una partida real (un
+  // trigger de DB desactualizado rechazaba el UPDATE y el .then() de acá
+  // nunca miraba .error) — la timba quedó 'activa' para siempre sin que
+  // nadie se enterara. Ahora se revisa el error, se reintenta unas veces
+  // (la RPC es idempotente, reintentar es seguro) y si sigue fallando se
+  // avisa en vez de quedar callado. [id].tsx también reintenta como red de
+  // seguridad si el usuario abre la timba a mano.
+  const timbaRpcLlamadaRef = useRef(false)
+  useEffect(() => {
+    if (!esOnline || !fila?.timba_id) return
+    if (fila.fase !== 'terminada' && fila.fase !== 'abandonada') return
+    if (timbaRpcLlamadaRef.current) return
+    timbaRpcLlamadaRef.current = true
+    const timbaId = fila.timba_id
+    const partidaId = fila.id
+    const cerrarConReintento = async (intentosRestantes: number): Promise<void> => {
+      const { error } = await supabase.rpc('cerrar_timba_juego', { p_partida_id: partidaId })
+      if (error) {
+        if (intentosRestantes > 1) return cerrarConReintento(intentosRestantes - 1)
+        timbaRpcLlamadaRef.current = false
+        avisar('No se pudo cerrar la timba automáticamente. Abrí la timba desde "Tus timbas" para reintentar.', 6000)
+        return
+      }
+      const { data } = await supabase.from('timbas')
+        .select('tipo, premio_descripcion, prenda_descripcion, monto_minimo, estado, resultado_ganador')
+        .eq('id', timbaId)
+        .single()
+      if (data) setTimbaFinal(data as TimbaFinal)
+    }
+    cerrarConReintento(3)
+  }, [esOnline, fila?.fase, fila?.timba_id, fila?.id, avisar])
+
   // nombre del rival
   useEffect(() => {
     if (!esOnline || !fila || !usuario?.id) return
@@ -285,26 +378,38 @@ export default function PartidaPool() {
     return () => { supabase.removeChannel(canal) }
   }, [esOnline, partidaId, usuario?.id, miAsiento])
 
-  // timer de turno (corre para ambos; solo ACTÚA el dueño del turno)
+  // Timer de turno (corre para ambos; solo ACTÚA el dueño del turno).
+  // Reconciliado contra fila.updated_at (roadmap §11.1): antes contaba desde
+  // fila.timer_seg con un setInterval puramente local — al volver de
+  // background (donde el interval de RN se pausa) el número mostrado podía
+  // no reflejar el tiempo real transcurrido. Ahora el límite se calcula una
+  // vez contra el timestamp del servidor y cada tick recalcula "cuánto
+  // falta" contra el reloj real, así que el primer tick después de volver
+  // ya muestra el valor correcto en vez de seguir donde se había quedado.
   useEffect(() => {
     if (!esOnline || !fila || fila.timer_seg === 0 || !estado || estado.fase === 'fin' || fila.fase !== 'en_juego' || animando) {
       setSegundos(null)
       return
     }
-    setSegundos(fila.timer_seg)
-    const iv = setInterval(() => {
-      setSegundos(s => {
-        if (s === null) return null
-        if (s <= 1) {
-          clearInterval(iv)
-          if (estadoRef.current?.turno === miJugador) vencioMiTimer()
-          return 0
-        }
-        return s - 1
-      })
-    }, 1000)
+    const limiteMs = new Date(fila.updated_at).getTime() + fila.timer_seg * 1000
+    let disparado = false
+    const tick = () => {
+      const restante = Math.max(0, Math.ceil((limiteMs - Date.now()) / 1000))
+      setSegundos(restante)
+      if (restante <= 0 && !disparado) {
+        disparado = true
+        if (estadoRef.current?.turno === miJugador) vencioMiTimer()
+        // gracia nivel 1 (Fase 9): es el turno del rival, ya venció SU
+        // timer y encima está ausente — probablemente su cliente nunca va
+        // a disparar vencioMiTimer() solo. Chequeo server-side con margen
+        // real dentro de reclamarTurnoPorAusencia(), esto es solo el gatillo.
+        else if (!rivalPresenteRef.current) reclamarTurnoPorAusencia()
+      }
+    }
+    tick()
+    const iv = setInterval(tick, 1000)
     return () => clearInterval(iv)
-  }, [esOnline, fila?.num_tiro, fila?.timer_seg, fila?.fase, estado?.turno, animando, miJugador])
+  }, [esOnline, fila?.num_tiro, fila?.timer_seg, fila?.fase, fila?.updated_at, estado?.turno, animando, miJugador])
 
   // el humano tiene bola en mano ahora mismo
   const turnoMio = esOnline
@@ -328,8 +433,10 @@ export default function PartidaPool() {
     setPensando(false)
     setSpin({ a: 0, b: 0 })
     setFuerza(0)
+    setAnguloSugerido(null) // rack nuevo invalida cualquier sugerencia sobre la mesa anterior
     setBolaEnManoPractica(false)
     setAngulo(Math.PI / 2)
+    setUltimoReplay(null)
     const rack = crearRack(nuevaSeed())
     setBolas(rack)
     if (esBot) {
@@ -361,10 +468,15 @@ export default function PartidaPool() {
   // ── ejecutar un tiro y animarlo (local: humano/bot; online: el mío) ──
   function ejecutarTiro(t: Tiro, bolasAhora?: Bola[]) {
     const base = bolasAhora ?? bolasRef.current
+    setUltimoReplay({
+      bolas: clonarBolas(base),
+      tiro: { ...t, ...(t.posBlanca ? { posBlanca: { ...t.posBlanca } } : {}) },
+    })
     const res = simularTiro(base, t)
     setSpin({ a: 0, b: 0 })
     setFuerza(0)
     fuerzaRef.current = 0
+    setAnguloSugerido(null) // la sugerencia queda hasta que se tira (spec §3)
     animar(res, () => {
       if (esOnline) procesarOnline(res, t)
       else if (esBot) procesarReglas(res)
@@ -372,11 +484,20 @@ export default function PartidaPool() {
     })
   }
 
+  function repetirUltimoTiro() {
+    if (!ultimoReplay || animando || pensando) return
+    const res = simularTiro(clonarBolas(ultimoReplay.bolas), ultimoReplay.tiro)
+    // Replay es estrictamente visual: no procesa reglas, no cambia la mesa y
+    // no persiste nada. Al terminar, el estado actual sigue intacto.
+    animar(res, () => {})
+  }
+
   function animar(res: ResultadoSimulacion, alTerminar: () => void) {
     setAnimando(true)
     // sonido agendado por los timestamps de los eventos + tacazo/vibración inicial
     sfx.reproducirTiro(res)
-    if (sonidoRef.current) haptica.golpe()
+    musicaAmbiente.reducir() // no tapar los efectos mientras corre la animación
+    if (hapticaRef.current) haptica.golpe()
     const huboEmboque = res.eventos.some(e => e.tipo === 'tronera' && e.bola !== 0)
     const t0 = performance.now()
     const paso = () => {
@@ -388,7 +509,8 @@ export default function PartidaPool() {
       } else {
         setMuestra(null)
         setAnimando(false)
-        if (sonidoRef.current && huboEmboque) haptica.tronera()
+        musicaAmbiente.restaurar()
+        if (hapticaRef.current && huboEmboque) haptica.tronera()
         alTerminar()
       }
     }
@@ -418,7 +540,9 @@ export default function PartidaPool() {
     if (resultado.rerack) {
       avisar('La 8 cayó en el break: se arma de nuevo')
     } else if (resultado.faltas.length > 0) {
-      const quien = quienTiro === miJugador && !esOnline ? '' : quienTiro === (esOnline ? miJugador : HUMANO) ? '' : ` de ${nombreOtro}`
+      // !esOnline implica miJugador === HUMANO (ver su definición), así que
+      // la comparación de abajo ya cubre ambos casos sin repetirla (roadmap §11.1)
+      const quien = quienTiro === (esOnline ? miJugador : HUMANO) ? '' : ` de ${nombreOtro}`
       avisar(`${TEXTO_FALTA[resultado.faltas[0]]}${quien}`)
     } else if (resultado.asignoGrupos) {
       const mio = e2.grupos[esOnline ? miJugador : HUMANO] === 'lisas' ? 'las LISAS' : 'las RAYADAS'
@@ -609,6 +733,43 @@ export default function PartidaPool() {
     })
   }
 
+  // ── ONLINE: gracia nivel 1 — el rival está ausente y ya venció SU timer;
+  // le paso el turno sin terminar la partida (Fase 9, spec §8.2). Reutiliza
+  // resolverTimeout tal cual usa vencioMiTimer — solo cambia quién lo dispara.
+  async function reclamarTurnoPorAusencia() {
+    const f = filaRef.current
+    const previo = estadoRef.current
+    if (!f || !previo || previo.fase === 'fin' || previo.turno === miJugador) return
+    const limiteMs = f.timer_seg * 1000 + MARGEN_TURNO_AUSENTE_MS
+    const limite = new Date(Date.now() - limiteMs).toISOString()
+    const e2 = resolverTimeout(previo)
+    const num = numTiroRef.current + 1
+    let finales = bolasRef.current
+    if (e2.bolaEnMano) finales = reponerBlanca(finales, e2.soloCabecera)
+    // garantía server-side (mismo patrón que reclamarVictoria): solo procede
+    // si de verdad pasó el margen sobre el mismo tiro — si el rival tiró
+    // justo mientras tanto, num_tiro ya cambió y esto no pisa nada.
+    const { data } = await supabase.from('partidas_pool')
+      .update({
+        estado_juego: e2,
+        estado_bolas: finales.map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, viva: b.viva })),
+        ultimo_tiro: null,
+        num_tiro: num,
+        updated_at: new Date().toISOString(),
+      })
+      .eq('id', f.id)
+      .eq('fase', 'en_juego')
+      .eq('num_tiro', f.num_tiro)
+      .lt('updated_at', limite)
+      .select('id')
+    if (data && data.length > 0) {
+      numTiroRef.current = num
+      setEstado(e2)
+      setBolas(finales)
+      avisar(`${nombreRival} no respondió a tiempo: bola en mano para vos`)
+    }
+  }
+
   // ── ONLINE: abandonar / reclamar por inactividad ──
   async function abandonar() {
     const f = filaRef.current
@@ -617,10 +778,29 @@ export default function PartidaPool() {
       .update({
         fase: 'abandonada',
         ganador_serie: miAsiento === 'host' ? 'invitado' : 'host',
+        motivo_abandono: 'voluntario',
         updated_at: new Date().toISOString(),
       })
       .eq('id', f.id)
     router.back()
+  }
+
+  function confirmarAbandonar() {
+    const f = filaRef.current
+    const enSerie = !!f && f.serie_max > 1 && (f.victorias_host > 0 || f.victorias_invitado > 0)
+    const marcador = f && miAsiento
+      ? (miAsiento === 'host' ? `${f.victorias_host}-${f.victorias_invitado}` : `${f.victorias_invitado}-${f.victorias_host}`)
+      : ''
+    Alert.alert(
+      'Rendirse',
+      enSerie
+        ? `Vas ${marcador} en la serie — rendirte ahora pierde la serie completa, no solo este juego. ¿Confirmás?`
+        : '¿Seguro que querés abandonar la partida? El rival gana automáticamente.',
+      [
+        { text: 'Seguir jugando', style: 'cancel' },
+        { text: 'Rendirse', style: 'destructive', onPress: abandonar },
+      ],
+    )
   }
 
   async function reclamarVictoria() {
@@ -629,12 +809,22 @@ export default function PartidaPool() {
     const limite = new Date(Date.now() - GRACIA_RECLAMO_MS).toISOString()
     // garantía server-side: solo procede si la fila está inactiva de verdad
     const { data } = await supabase.from('partidas_pool')
-      .update({ fase: 'abandonada', ganador_serie: miAsiento, updated_at: new Date().toISOString() })
+      .update({
+        fase: 'abandonada',
+        ganador_serie: miAsiento,
+        motivo_abandono: 'desconexion',
+        updated_at: new Date().toISOString(),
+      })
       .eq('id', f.id)
       .eq('fase', 'en_juego')
       .lt('updated_at', limite)
       .select('id')
-    if (!data || data.length === 0) avisar('Todavía no pasó el tiempo de gracia')
+    if (!data || data.length === 0) { avisar('Todavía no pasó el tiempo de gracia'); return }
+
+    // historial de desconexiones (spec §8.3): informar, no castigar — cuenta
+    // solo desconexiones reales, nunca rendiciones voluntarias
+    const rivalId = miAsiento === 'host' ? f.invitado_id : f.host_id
+    await supabase.from('eventos_desconexion').insert({ usuario_id: rivalId, juego: 'pool', partida_id: f.id })
   }
 
   const puedeReclamar = esOnline && fila && estado && fila.fase === 'en_juego' &&
@@ -663,22 +853,6 @@ export default function PartidaPool() {
   function revancha() {
     rompe.current = rival(rompe.current)
     nuevaPartida(rompe.current)
-  }
-
-  // Integración Timba (spec §15): al terminar online, sugerir —no auto-resolver—
-  // una Timba con las opciones precargadas. El creador la resuelve después,
-  // como cualquier Timba (modelo de confianza). Solo online: apostar contra un
-  // bot no tiene sentido (anti-ludopatía, ver [[feedback-anti-ludopatia]]).
-  function crearTimbaResultado() {
-    const yo = usuario?.nombre || 'Vos'
-    router.replace({
-      pathname: '/timba/nueva',
-      params: {
-        tituloPreset: `Pool: ${yo} vs ${nombreRival}`,
-        opcionesPreset: `Gana ${yo},Gana ${nombreRival}`,
-        opcionesBloqueadas: 'true',
-      },
-    } as any)
   }
 
   // ── gestos sobre la mesa ──
@@ -740,6 +914,21 @@ export default function PartidaPool() {
   const ganeSerie = esOnline && fila?.ganador_serie != null && fila.ganador_serie === miAsiento
   const ganeJuegoBot = estado?.ganador === HUMANO
 
+  // Mensaje de la timba pre-comprometida (spec): premio/prenda/plata según
+  // corresponda — se resolvió sola, no hay nada que proponer ni confirmar.
+  const mensajeTimba = (() => {
+    if (!timbaFinal) return null
+    if (timbaFinal.estado === 'cancelada') return 'La timba se canceló (desconexión): nadie debe nada.'
+    if (timbaFinal.estado !== 'cerrada') return null
+    if (timbaFinal.tipo === 'monetaria') {
+      return ganeSerie ? `Ahora te deben $${timbaFinal.monto_minimo}` : `Ahora debés $${timbaFinal.monto_minimo}`
+    }
+    if (ganeSerie) {
+      return timbaFinal.premio_descripcion ? `Tu premio es: ${timbaFinal.premio_descripcion}` : null
+    }
+    return timbaFinal.prenda_descripcion ? `Tu prenda es: ${timbaFinal.prenda_descripcion}` : null
+  })()
+
   return (
     <View style={[es.contenedor, { backgroundColor: c.fondo }]}>
       <View style={es.header}>
@@ -748,7 +937,7 @@ export default function PartidaPool() {
         </TouchableOpacity>
         <Text style={[es.titulo, { color: c.texto }]}>{titulo}</Text>
         {esOnline && fila?.fase === 'en_juego' ? (
-          <TouchableOpacity style={[es.botonRack, { borderColor: c.borde }]} onPress={abandonar} activeOpacity={0.8}>
+          <TouchableOpacity style={[es.botonRack, { borderColor: c.borde }]} onPress={confirmarAbandonar} activeOpacity={0.8}>
             <Text style={[es.botonRackTexto, { color: c.error }]}>Rendirse</Text>
           </TouchableOpacity>
         ) : esBot || esOnline ? (
@@ -759,6 +948,37 @@ export default function PartidaPool() {
           </TouchableOpacity>
         )}
       </View>
+
+      {/* fila de práctica libre: usa el espacio libre arriba de la mesa
+          (feedback de juego real, jul 2026) en vez de competir con Efecto y
+          los botones de fino en la barra de abajo, que en pantallas
+          angostas no entraban los cuatro juntos */}
+      {!esOnline && (
+        <View style={es.filaSuperior}>
+          {!esBot && !esOnline && (
+            <TouchableOpacity
+              style={[es.botonSuperior, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+              onPress={sugerirTiro}
+              activeOpacity={0.8}
+              disabled={!controlesActivos}
+            >
+              <Text style={{ fontSize: 15 }}>💡</Text>
+              <Text style={[es.botonSuperiorTexto, { color: c.textoSuave }]}>Sugerencia</Text>
+            </TouchableOpacity>
+          )}
+          {!esOnline && ultimoReplay && (
+            <TouchableOpacity
+              style={[es.botonSuperior, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
+              onPress={repetirUltimoTiro}
+              activeOpacity={0.8}
+              disabled={animando || pensando}
+            >
+              <Text style={{ fontSize: 15 }}>↻</Text>
+              <Text style={[es.botonSuperiorTexto, { color: c.textoSuave }]}>Replay</Text>
+            </TouchableOpacity>
+          )}
+        </View>
+      )}
 
       {/* HUD superior */}
       {conReglas && estado ? (
@@ -847,7 +1067,10 @@ export default function PartidaPool() {
                   muestra={muestra}
                   angulo={angulo}
                   fuerzaPreview={fuerza}
+                  efectoLateral={spin.a}
                   mostrarGuia={!animando && turnoMio}
+                  nivelAsistencia={nivelAsistenciaEfectivo}
+                  anguloSugerido={anguloSugerido}
                   bolaEnMano={bolaEnMano}
                   longitudGuiaObjetivo={esBot && dificultad === 'facil' ? 40 : 6}
                   tacoSkin={tacoSkin}
@@ -905,14 +1128,6 @@ export default function PartidaPool() {
             </View>
             <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Efecto</Text>
           </TouchableOpacity>
-          <TouchableOpacity
-            style={[es.botonSpin, { borderColor: c.borde, backgroundColor: c.fondoCard }]}
-            onPress={() => setSkinsAbierto(true)}
-            activeOpacity={0.8}
-          >
-            <Text style={{ fontSize: 16 }}>🎨</Text>
-            <Text style={[es.botonSpinTexto, { color: c.textoSuave }]}>Taco</Text>
-          </TouchableOpacity>
         </View>
 
         {puedeReclamar ? (
@@ -947,14 +1162,6 @@ export default function PartidaPool() {
       </View>
 
       <SelectorSpin visible={spinAbierto} spin={spin} onCerrar={() => setSpinAbierto(false)} onElegir={setSpin} />
-      <SelectorSkins
-        visible={skinsAbierto}
-        titulo="Elegí tu taco"
-        opciones={OPCIONES_TACO}
-        seleccionado={tacoSkin}
-        onCerrar={() => setSkinsAbierto(false)}
-        onElegir={elegirTacoSkin}
-      />
 
       {/* overlay: elección tras break inválido (solo vs bot) */}
       {eligeRebreak && (
@@ -1000,12 +1207,16 @@ export default function PartidaPool() {
         </View>
       )}
 
-      {/* overlay: fin (online) */}
+      {/* overlay: fin (online) — si había timba, ya se resolvió sola
+          (cerrar_timba_juego): acá solo se comunica el resultado, no hay
+          nada para proponer ni confirmar. */}
       {esOnline && (fila?.fase === 'terminada' || fila?.fase === 'abandonada') && (
         <View style={es.overlay}>
           <View style={[es.cartaFin, { backgroundColor: c.fondoCard, borderColor: ganeSerie ? c.primario : c.borde }]}>
             <Text style={[es.finTitulo, { color: ganeSerie ? c.primario : c.texto }]}>
-              {ganeSerie ? '¡Ganaste! 🎱' : `Ganó ${nombreRival}`}
+              {timbaFinal?.estado === 'cancelada'
+                ? 'Partida cancelada'
+                : ganeSerie ? 'Has ganado 🎱' : 'Has perdido'}
             </Text>
             <Text style={[es.finDetalle, { color: c.textoSuave }]}>
               {fila.fase === 'abandonada'
@@ -1014,12 +1225,14 @@ export default function PartidaPool() {
                   ? `Serie ${miAsiento === 'host' ? `${fila.victorias_host}–${fila.victorias_invitado}` : `${fila.victorias_invitado}–${fila.victorias_host}`}.`
                   : ganeSerie ? 'Embocaste la 8.' : 'Se llevó la 8.'}
             </Text>
+            {mensajeTimba && (
+              <Text style={[es.finDetalle, { color: c.primario, fontWeight: '800', fontSize: 16 }]}>
+                {mensajeTimba}
+              </Text>
+            )}
             <View style={es.finBotones}>
-              <TouchableOpacity style={[es.botonSec, { borderColor: c.borde }]} onPress={() => router.back()} activeOpacity={0.8}>
-                <Text style={[es.botonSecTexto, { color: c.textoSuave }]}>Salir</Text>
-              </TouchableOpacity>
-              <TouchableOpacity style={[es.botonPri, { backgroundColor: c.primario }]} onPress={crearTimbaResultado} activeOpacity={0.8}>
-                <Text style={[es.botonPriTexto, { color: c.fondo }]}>Crear Timba</Text>
+              <TouchableOpacity style={[es.botonPri, { backgroundColor: c.primario }]} onPress={() => router.back()} activeOpacity={0.8}>
+                <Text style={[es.botonPriTexto, { color: c.fondo }]}>Salir</Text>
               </TouchableOpacity>
             </View>
           </View>
@@ -1053,6 +1266,12 @@ function makeEstilos(c: ColoresTema) {
     chipBolas: { flexDirection: 'row', gap: 3, minHeight: 12 },
     vs: { fontSize: 12, fontWeight: '800' },
     timer: { fontSize: 11, fontWeight: '800' },
+    filaSuperior: { flexDirection: 'row', justifyContent: 'flex-end', gap: 8, paddingHorizontal: 20, paddingTop: 2 },
+    botonSuperior: {
+      flexDirection: 'row', alignItems: 'center', gap: 6,
+      borderWidth: 1, borderRadius: 12, paddingHorizontal: 12, paddingVertical: 6,
+    },
+    botonSuperiorTexto: { fontSize: 12, fontWeight: '700' },
     riel: { minHeight: 24, alignItems: 'center', justifyContent: 'center', paddingHorizontal: 20 },
     rielVacio: { fontSize: 11, textAlign: 'center' },
     rielBolas: { flexDirection: 'row', gap: 5 },

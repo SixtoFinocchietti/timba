@@ -55,11 +55,13 @@ export interface SonidoPool {
   cancelar: () => void
 }
 
-export function useSonidoPool(habilitado: boolean): SonidoPool {
+export function useSonidoPool(habilitado: boolean, volumenMaestro = 1): SonidoPool {
   const canales = useRef<Partial<Record<NombreSfx, CanalSfx>>>({})
   const timers = useRef<ReturnType<typeof setTimeout>[]>([])
   const habRef = useRef(habilitado)
   habRef.current = habilitado
+  const volRef = useRef(volumenMaestro)
+  volRef.current = volumenMaestro
 
   useEffect(() => {
     try {
@@ -91,7 +93,7 @@ export function useSonidoPool(habilitado: boolean): SonidoPool {
     const p = canal.players[canal.i]
     canal.i = (canal.i + 1) % canal.players.length
     try {
-      p.volume = clamp(volumen, 0, 1)
+      p.volume = clamp(volumen * volRef.current, 0, 1)
       try { (p as any).setPlaybackRate?.(clamp(rate, 0.5, 2)) } catch {}
       try { (p as any).seekTo?.(0) } catch {}
       p.play()

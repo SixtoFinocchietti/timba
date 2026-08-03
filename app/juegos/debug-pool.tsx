@@ -29,6 +29,13 @@ export default function DebugPool() {
   bolaRef.current = bola
   const zonaRef = useRef<View>(null)
 
+  // Fase 12.5 del roadmap: "sacar/proteger antes de producción" — no se
+  // borra (sigue siendo útil si hace falta recalibrar geometría más
+  // adelante), pero queda inalcanzable fuera de un build de desarrollo.
+  useEffect(() => {
+    if (!__DEV__) router.replace('/juegos/pool')
+  }, [])
+
   // fallback de medición: en web, un tab en segundo plano no dispara onLayout
   useEffect(() => {
     const timer = setTimeout(() => {
@@ -52,6 +59,8 @@ export default function DebugPool() {
       const m = tf.aMesa(e.x, e.y)
       setBola({ ...bolaRef.current, pos: { x: m.x, y: m.y } })
     })
+
+  if (!__DEV__) return null
 
   return (
     <View style={[es.contenedor, { backgroundColor: c.fondo }]}>

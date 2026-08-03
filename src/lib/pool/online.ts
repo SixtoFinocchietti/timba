@@ -10,6 +10,7 @@
 import { crearRack } from './fisica'
 import { EstadoJuego, Jugador, crearEstadoInicial } from './reglas'
 import { Bola, SnapshotBola, Tiro } from './tipos'
+import { NivelAsistencia } from './asistencia'
 
 export type AsientoPool = 'host' | 'invitado'
 
@@ -28,6 +29,15 @@ export interface PartidaPoolFila {
   rompe_host: boolean
   timer_seg: number
   ganador_serie: AsientoPool | null
+  // Fase 9 (auditoría técnica jul 2026): distingue "se rindió" de "se le
+  // cortó la conexión" — null hasta que fase pasa a 'abandonada'.
+  motivo_abandono: 'voluntario' | 'desconexion' | null
+  // Timba creada a partir de esta partida (§4.3) — null si no se creó ninguna
+  timba_id: string | null
+  // Hándicap por jugador (§2.3, Fase 8.2): fijado por el host al invitar,
+  // dura toda la partida — cada cliente usa el que corresponde a SU asiento
+  asistencia_host: NivelAsistencia
+  asistencia_invitado: NivelAsistencia
   updated_at: string
 }
 

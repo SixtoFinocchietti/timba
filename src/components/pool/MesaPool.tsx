@@ -18,6 +18,7 @@ import {
   Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval, Path,
   RadialGradient, Rect, Skia, Text as SkiaText, useFont, useImage, vec,
 } from '@shopify/react-native-skia'
+import { ALCANCE_BAJA, NIVEL_ASISTENCIA_DEFAULT, NivelAsistencia } from '@/lib/pool/asistencia'
 import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS, limitesJuego } from '@/lib/pool/fisica'
 import { calcularTrayectoriaGuia } from '@/lib/pool/guia'
 import { TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
@@ -40,7 +41,15 @@ export interface MesaPoolProps {
   muestra: MuestraAnimacion | null // si hay animación en curso, manda ella
   angulo: number
   fuerzaPreview: number // 0..1: retroceso del taco mientras se carga el tiro
+  efectoLateral?: number // spin.a elegido (SelectorSpin): curva el rebote en banda (auditoría técnica, jul 2026)
   mostrarGuia: boolean
+  // niveles de asistencia (auditoría técnica, jul 2026, spec §2): cuánta
+  // trayectoria de la blanca se revela — default: NIVEL_ASISTENCIA_DEFAULT
+  nivelAsistencia?: NivelAsistencia
+  // sugerencia del bot en práctica libre (spec §3): ángulo del mejor tiro
+  // detectado, se dibuja aparte de la guía propia con otro color — null =
+  // no hay sugerencia activa
+  anguloSugerido?: number | null
   bolaEnMano: boolean
   // debug temporal (spec de tuning jul 2026): dibuja la geometría invisible
   // de colisión encima de la mesa real — verde las bandas jugables, rojo las
@@ -180,7 +189,8 @@ function BolaDibujada({ cx: cxRaw, cy: cyRaw, r, n, rot, dirPx, dirPy, fuente }:
 }
 
 export default function MesaPool({
-  anchoPx, bolas, muestra, angulo, fuerzaPreview, mostrarGuia, bolaEnMano,
+  anchoPx, bolas, muestra, angulo, fuerzaPreview, efectoLateral = 0, mostrarGuia,
+  nivelAsistencia = NIVEL_ASISTENCIA_DEFAULT, anguloSugerido = null, bolaEnMano,
   longitudGuiaObjetivo = 6, debug = false, tacoSkin = TACO_DEFAULT,
 }: MesaPoolProps) {
   const tf = crearTransform(anchoPx)
@@ -206,13 +216,27 @@ export default function MesaPool({
         .map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot, dirX: b.dirX, dirY: b.dirY }))
 
   const blanca = bolas.find(b => b.n === 0 && b.viva)
-  // guía con 1 rebote en banda (auditoría técnica, jul 2026): muestra el
-  // primer tramo y, si terminó en banda, el tramo posterior a la reflexión
-  // — solo si de verdad hay algo dentro del alcance (ver guia.ts).
-  const trayectoria = !muestra && mostrarGuia && blanca
-    ? calcularTrayectoriaGuia(bolas, angulo, { maxRebotes: 1 })
+  // niveles de asistencia (spec §2): "sin" no dibuja nada; "baja" trunca el
+  // alcance a un adelanto corto sin llegar al impacto real; "normal" llega
+  // completo hasta el primer evento; "maxima" además agrega el rebote en
+  // banda. El círculo del impacto y la flecha/tangente se filtran más abajo
+  // en el render, no acá — ver nota ahí.
+  const trayectoria = !muestra && mostrarGuia && blanca && nivelAsistencia !== 'sin'
+    ? calcularTrayectoriaGuia(bolas, angulo, {
+        maxRebotes: nivelAsistencia === 'maxima' ? 1 : 0,
+        alcanceTotal: nivelAsistencia === 'baja' ? ALCANCE_BAJA : undefined,
+        efectoLateral,
+        fuerza: fuerzaPreview,
+      })
     : null
   const objetivo = trayectoria?.bolaObjetivo != null ? bolas.find(b => b.n === trayectoria.bolaObjetivo) : null
+
+  // sugerencia del bot en práctica libre (spec §3): trayectoria aparte, sin
+  // rebote (solo "hacia dónde apuntar"), independiente del nivel de
+  // asistencia del jugador — es una jugada sugerida, no parte de su guía.
+  const trayectoriaSugerida = !muestra && anguloSugerido != null && blanca
+    ? calcularTrayectoriaGuia(bolas, anguloSugerido, { maxRebotes: 0 })
+    : null
 
   // taco: detrás de la blanca, retrocede con la fuerza
   const dirX = Math.cos(angulo)
@@ -295,9 +319,13 @@ export default function MesaPool({
         )
       })()}
 
-      {/* guía de tiro: 1+ segmentos (blanca→impacto, y tras un rebote en
-          banda, el tramo reflejado) — el tramo post-rebote se dibuja más
-          tenue porque es una aproximación geométrica, sin fricción ni spin. */}
+      {/* guía de tiro (spec §2): cuánto se dibuja depende del nivel de
+          asistencia — "baja" corta en un adelanto y no muestra el círculo de
+          impacto (el punto no es real, es solo la punta del adelanto);
+          "normal" agrega el círculo (marca dónde termina lo que ya se está
+          dibujando, no es información extra); "maxima" suma la flecha del
+          objetivo, la tangente de la blanca y, si hubo, el rebote (ya viene
+          filtrado desde el cálculo de arriba vía maxRebotes). */}
       {trayectoria && trayectoria.segmentos.length > 0 && (() => {
         const ultimo = trayectoria.segmentos[trayectoria.segmentos.length - 1]
         const finUltimoPx = tf.aPantalla(ultimo.fin)
@@ -314,11 +342,13 @@ export default function MesaPool({
                 <DashPathEffect intervals={[9, 7]} />
               </Line>
             ))}
-            <Circle
-              cx={finUltimoPx.x} cy={finUltimoPx.y} r={rPx}
-              style="stroke" strokeWidth={1.6} color="rgba(255,255,255,0.75)"
-            />
-            {objetivo && trayectoria.dirObjetivo && (
+            {nivelAsistencia !== 'baja' && (
+              <Circle
+                cx={finUltimoPx.x} cy={finUltimoPx.y} r={rPx}
+                style="stroke" strokeWidth={1.6} color="rgba(255,255,255,0.75)"
+              />
+            )}
+            {nivelAsistencia === 'maxima' && objetivo && trayectoria.dirObjetivo && (
               <Line
                 p1={vec(tf.aPantalla(objetivo.pos).x, tf.aPantalla(objetivo.pos).y)}
                 p2={vec(
@@ -328,7 +358,7 @@ export default function MesaPool({
                 color="#DFC47A" strokeWidth={2.5}
               />
             )}
-            {trayectoria.dirBlanca && (
+            {nivelAsistencia === 'maxima' && trayectoria.dirBlanca && (
               <Line
                 p1={vec(finUltimoPx.x, finUltimoPx.y)}
                 p2={vec(
@@ -341,6 +371,28 @@ export default function MesaPool({
           </Group>
         )
       })()}
+
+      {/* sugerencia del bot en práctica libre (spec §3): mismo tipo de línea
+          que la guía propia pero en celeste, para no confundirse — queda
+          dibujada hasta que se tira (o se pide otra), a propósito: el
+          jugador la usa de referencia para alinear su propio apuntado
+          (feedback de juego real, jul 2026) — el padre (partida-pool.tsx)
+          la limpia recién en ejecutarTiro()/nuevaPartida(). */}
+      {trayectoriaSugerida && trayectoriaSugerida.segmentos.length > 0 && (
+        <Group>
+          {trayectoriaSugerida.segmentos.map((seg, i) => (
+            <Line
+              key={i}
+              p1={vec(tf.aPantalla(seg.origen).x, tf.aPantalla(seg.origen).y)}
+              p2={vec(tf.aPantalla(seg.fin).x, tf.aPantalla(seg.fin).y)}
+              color="rgba(90,200,223,0.85)"
+              strokeWidth={2.5}
+            >
+              <DashPathEffect intervals={[6, 4]} />
+            </Line>
+          ))}
+        </Group>
+      )}
 
       {/* bolas: recortadas al octágono real de la mesa (ver nota arriba y en
           transform.ts) — ninguna se dibuja fuera del paño, sin importar qué
