@@ -13,6 +13,7 @@ import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { estadoInicialOnline } from '@/lib/pool/online'
+import { NIVELES_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NivelAsistencia } from '@/lib/pool/asistencia'
 
 function nuevaSeed(): number {
   return (Date.now() ^ (Math.random() * 0x7fffffff)) | 0
@@ -39,6 +40,8 @@ export default function SalaPool() {
     timer: string
     modo_sala: string
     timbaId?: string
+    asistenciaHost?: string
+    asistenciaInvitado?: string
   }>()
 
   const amigoNombre = params.amigo ?? 'Amigo'
@@ -48,6 +51,13 @@ export default function SalaPool() {
     : 45
   const esInvitado = params.modo_sala === 'invitado'
   const tuNombre = usuario?.nombre ?? 'Vos'
+
+  function nivelValido(v?: string): NivelAsistencia {
+    return v === 'sin' || v === 'baja' || v === 'normal' || v === 'maxima' ? v : NIVEL_ASISTENCIA_DEFAULT
+  }
+  const asistenciaHost = nivelValido(params.asistenciaHost)
+  const asistenciaInvitado = nivelValido(params.asistenciaInvitado)
+  const nombreNivel = (n: NivelAsistencia) => NIVELES_ASISTENCIA.find(x => x.id === n)?.nombre ?? n
 
   const [amigoUnido, setAmigoUnido] = useState(esInvitado)
   const [yoListo, setYoListo] = useState(false)
@@ -183,6 +193,8 @@ export default function SalaPool() {
       hostId: usuario.id,
       hostNombre: usuario?.nombre ?? '',
       timbaId: params.timbaId ?? null,
+      asistenciaHost,
+      asistenciaInvitado,
     })
     await supabase.from('mensajes').insert({
       emisor_id: usuario.id,
@@ -204,6 +216,8 @@ export default function SalaPool() {
         host_id: usuario.id,
         invitado_id: params.amigoId,
         timba_id: params.timbaId ?? null,
+        asistencia_host: asistenciaHost,
+        asistencia_invitado: asistenciaInvitado,
         ...config,
       })
       .select('id')
@@ -261,6 +275,9 @@ export default function SalaPool() {
           </Text>
           <Text style={[es.timbaDetalle, { color: c.texto }]}>
             {timer === 0 ? 'Sin límite de tiempo por tiro' : `${timer}s por tiro`}
+          </Text>
+          <Text style={[es.timbaDetalle, { color: c.texto }]}>
+            Asistencia: vos {nombreNivel(esInvitado ? asistenciaInvitado : asistenciaHost)} · {amigoNombre} {nombreNivel(esInvitado ? asistenciaHost : asistenciaInvitado)}
           </Text>
         </View>
 

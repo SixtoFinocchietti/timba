@@ -17,6 +17,9 @@ import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { TimbaTipo } from '@/types'
 import { useInvitacionesPendientes, InvitacionPendiente } from '@/hooks/useInvitacionesPendientes'
+import {
+  CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NIVELES_ASISTENCIA, NivelAsistencia,
+} from '@/lib/pool/asistencia'
 
 type SerieVal = 1 | 3
 type TimerVal = 0 | 30 | 45 | 60
@@ -51,6 +54,18 @@ export default function PoolOnlineConfig() {
 
   const [serie, setSerie] = useState<SerieVal>(1)
   const [timer, setTimer] = useState<TimerVal>(45)
+  // Hándicap por jugador (Fase 8.2): el host fija el nivel de asistencia de
+  // los DOS asientos al armar la invitación — dos amigos de nivel distinto
+  // pueden timbear parejo. El propio arranca en el default personal del
+  // host (lo que ya usa en práctica/bot); el del amigo arranca en Normal.
+  const [asistenciaHost, setAsistenciaHost] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
+  const [asistenciaInvitado, setAsistenciaInvitado] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
+
+  useEffect(() => {
+    AsyncStorage.getItem(CLAVE_NIVEL_ASISTENCIA).then(v => {
+      if (v === 'sin' || v === 'baja' || v === 'normal' || v === 'maxima') setAsistenciaHost(v)
+    })
+  }, [])
 
   const [sheetVisible, setSheetVisible] = useState(false)
   const [busqueda, setBusqueda] = useState('')
@@ -157,6 +172,8 @@ export default function PoolOnlineConfig() {
       hostId: usuario.id,
       hostNombre: usuario.nombre ?? '',
       timbaId,
+      asistenciaHost,
+      asistenciaInvitado,
     })
     const { error: invitacionError } = await supabase.from('mensajes').insert({
       emisor_id: usuario.id,
@@ -189,13 +206,18 @@ export default function PoolOnlineConfig() {
         serie: String(serie),
         timer: String(timer),
         modo_sala: 'host',
+        asistenciaHost,
+        asistenciaInvitado,
         ...(timbaId ? { timbaId } : {}),
       },
     } as any)
   }
 
   function unirse(inv: InvitacionPendiente) {
-    let cfg = { serie: 1, timer: 45, hostId: inv.emisor_id, hostNombre: inv.emisorNombre, timbaId: null as string | null }
+    let cfg = {
+      serie: 1, timer: 45, hostId: inv.emisor_id, hostNombre: inv.emisorNombre, timbaId: null as string | null,
+      asistenciaHost: NIVEL_ASISTENCIA_DEFAULT as NivelAsistencia, asistenciaInvitado: NIVEL_ASISTENCIA_DEFAULT as NivelAsistencia,
+    }
     try { Object.assign(cfg, JSON.parse(inv.contenido)) } catch {}
     router.push({
       pathname: '/juegos/sala-pool',
@@ -205,6 +227,8 @@ export default function PoolOnlineConfig() {
         serie: String(cfg.serie),
         timer: String(cfg.timer),
         modo_sala: 'invitado',
+        asistenciaHost: cfg.asistenciaHost,
+        asistenciaInvitado: cfg.asistenciaInvitado,
         ...(cfg.timbaId ? { timbaId: cfg.timbaId } : {}),
       },
     } as any)
@@ -294,6 +318,41 @@ export default function PoolOnlineConfig() {
               <Text style={[es.opcionTexto, { color: timer === v ? c.primario : c.textoSuave }]}>
                 {v === 0 ? '∞' : `${v}s`}
               </Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      {/* Hándicap por jugador (Fase 8.2, §2.3): dos selectores independientes
+          para que dos amigos de nivel distinto timbeen parejo — ninguno
+          afecta al otro, cada uno ve solo su propia guía */}
+      <View style={es.seccion}>
+        <Text style={[es.seccionTitulo, { color: c.textoSuave }]}>TU ASISTENCIA AL APUNTADO</Text>
+        <View style={es.filaOpciones}>
+          {NIVELES_ASISTENCIA.map(n => (
+            <TouchableOpacity
+              key={n.id}
+              style={[es.opcionChica, { backgroundColor: c.fondoCard, borderColor: asistenciaHost === n.id ? c.primario : c.borde }]}
+              onPress={() => setAsistenciaHost(n.id)}
+              activeOpacity={0.8}
+            >
+              <Text style={[es.opcionTexto, { color: asistenciaHost === n.id ? c.primario : c.textoSuave }]}>{n.nombre}</Text>
+            </TouchableOpacity>
+          ))}
+        </View>
+      </View>
+
+      <View style={es.seccion}>
+        <Text style={[es.seccionTitulo, { color: c.textoSuave }]}>ASISTENCIA DE TU AMIGO</Text>
+        <View style={es.filaOpciones}>
+          {NIVELES_ASISTENCIA.map(n => (
+            <TouchableOpacity
+              key={n.id}
+              style={[es.opcionChica, { backgroundColor: c.fondoCard, borderColor: asistenciaInvitado === n.id ? c.primario : c.borde }]}
+              onPress={() => setAsistenciaInvitado(n.id)}
+              activeOpacity={0.8}
+            >
+              <Text style={[es.opcionTexto, { color: asistenciaInvitado === n.id ? c.primario : c.textoSuave }]}>{n.nombre}</Text>
             </TouchableOpacity>
           ))}
         </View>

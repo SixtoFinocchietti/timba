@@ -191,6 +191,15 @@ export default function PartidaPool() {
     : null
   const miJugador: Jugador = esOnline ? (miAsiento ? jugadorDe(miAsiento) : 'A') : HUMANO
 
+  // Hándicap por jugador (Fase 8.2): en online, el nivel de asistencia lo
+  // fijó el host al invitar y queda pegado a MI asiento durante todo el
+  // partido — reemplaza el default personal (que sigue rigiendo en
+  // práctica/bot, donde no hay handicap que respetar).
+  const nivelAsistenciaEfectivo: NivelAsistencia =
+    esOnline && fila && miAsiento
+      ? (miAsiento === 'host' ? fila.asistencia_host : fila.asistencia_invitado)
+      : nivelAsistencia
+
   useEffect(() => () => {
     if (rafRef.current != null) cancelAnimationFrame(rafRef.current)
     if (botTimer.current) clearTimeout(botTimer.current)
@@ -1060,7 +1069,7 @@ export default function PartidaPool() {
                   fuerzaPreview={fuerza}
                   efectoLateral={spin.a}
                   mostrarGuia={!animando && turnoMio}
-                  nivelAsistencia={nivelAsistencia}
+                  nivelAsistencia={nivelAsistenciaEfectivo}
                   anguloSugerido={anguloSugerido}
                   bolaEnMano={bolaEnMano}
                   longitudGuiaObjetivo={esBot && dificultad === 'facil' ? 40 : 6}
