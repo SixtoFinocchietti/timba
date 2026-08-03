@@ -1004,7 +1004,7 @@ con `onSlidingComplete` (no en cada pixel de drag) para no saturar AsyncStorage.
 deshabilita visualmente cuando su toggle está apagado (no tiene sentido ajustar el volumen de
 algo que no está sonando).
 
-### Fase 11 — Centro de invitaciones (decisión de alcance app-wide, §9) — ✅ paso 1 hecho
+### Fase 11 — Centro de invitaciones (decisión de alcance app-wide, §9) — ✅ hecha (pasos 1 y 2)
 *Impacto: medio (hoy funciona, aunque triplicado). Dificultad: alta si es la versión completa. Dependencias: ninguna.*
 
 **Camino incremental recomendado** (§9.2): empezar por el hook compartido
@@ -1019,8 +1019,21 @@ cambio de UI). `pool-online.tsx` también lo adopta, pasándole su ventana corta
 (Fase 10.4); el dedupe-por-emisor y el descarte con X siguen siendo lógica propia de Pool encima
 del hook (no se generalizaron porque Blackjack/Poker no los pidieron — no hay que imponerles un
 comportamiento que no eligieron). `truco.tsx` no usa este patrón de invitaciones en absoluto, no
-se tocó. **Paso 2 (pantalla única + `expira_en` en base) queda pendiente**, sin decisión tomada
-de si vale la pena — es la parte cara de esta fase y no fue pedida todavía.
+se tocó.
+
+✅ **Paso 2 hecho**: migración `026_mensajes_expira_en_invitaciones.sql` — `mensajes.expira_en`
+calculado por un trigger `BEFORE INSERT` según el `tipo` (10 min para `invitacion_pool`, 48h para
+el resto), de una sola vez en la base en vez de repetido client-side. El hook compartido dejó de
+calcular una ventana y ahora filtra por `expira_en > now()`; de paso ahora acepta un array de
+`tipo` (necesario para traer los 5 tipos juntos). Pantalla nueva `app/invitaciones.tsx`: filtros
+Todas/Timba/Pool/Blackjack/Poker/Truco, una card por invitación con "Jugar"/"Unirse" +
+descartar (X, misma clave de AsyncStorage que ya usaba Pool — el id de mensaje es único en toda
+la tabla). `aceptarInvitacion()` replica, tipo por tipo, exactamente la navegación que cada
+pantalla propia (o la card del chat, para Truco/Timba) ya hacía — no inventa un flujo nuevo.
+Entrada en el Drawer con badge de cantidad (no exacto: no resta las descartadas, es solo un
+indicador de "hay algo nuevo"). **No se tocó ni se sacó el inbox propio de cada juego**
+(Blackjack/Poker/Pool siguen mostrando "Te invitaron a jugar" en su propia pantalla) — la
+pantalla única es un acceso adicional, no un reemplazo.
 
 ### Fase 12 — Expo Go / Samsung + limpieza general
 *Impacto: medio-alto (bug puntual ya diagnosticado, fix de bajo riesgo) + varios. Dificultad: baja-media cada ítem. Dependencias: ninguna, se pueden hacer en paralelo con cualquier otra fase.*

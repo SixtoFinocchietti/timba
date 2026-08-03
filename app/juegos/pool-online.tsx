@@ -16,7 +16,7 @@ import { useColores } from '@/lib/ThemeContext'
 import { ColoresTema } from '@/lib/colores'
 import { AppIcon } from '@/components/ui/AppIcon'
 import { TimbaTipo } from '@/types'
-import { useInvitacionesPendientes, InvitacionPendiente } from '@/hooks/useInvitacionesPendientes'
+import { useInvitacionesPendientes, InvitacionPendiente, CLAVE_INV_DESCARTADAS } from '@/hooks/useInvitacionesPendientes'
 import {
   CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NIVELES_ASISTENCIA, NivelAsistencia,
 } from '@/lib/pool/asistencia'
@@ -38,14 +38,14 @@ function generarCodigo(): string {
   return Array.from({ length: 16 }, () => chars[Math.floor(Math.random() * chars.length)]).join('')
 }
 
-// Invitaciones: solo la más reciente por amigo distinto, de los últimos 10
-// minutos, y de esas se muestra una sola card a la vez (spec §7.2) — una
-// invitación a jugar pierde sentido rápido. El descarte (X) no borra el
-// mensaje (es historial de chat): se guarda el id en un set local que
-// persiste entre sesiones, y al filtrar sobre él aparece sola la siguiente
-// si existe — no hace falta ninguna lógica extra de "avanzar a la próxima".
-const VENTANA_INVITACION_MS = 10 * 60 * 1000
-const CLAVE_INV_DESCARTADAS = '@timba:pool_inv_descartadas'
+// Invitaciones: solo la más reciente por amigo distinto (la ventana de 10
+// minutos ya la resuelve mensajes.expira_en en la base, migración 026), y
+// de esas se muestra una sola card a la vez (spec §7.2) — una invitación a
+// jugar pierde sentido rápido. El descarte (X) no borra el mensaje (es
+// historial de chat): se guarda el id en un set local que persiste entre
+// sesiones, y al filtrar sobre él aparece sola la siguiente si existe — no
+// hace falta ninguna lógica extra de "avanzar a la próxima". Clave
+// compartida con la pantalla única de Invitaciones (Fase 11 paso 2).
 
 export default function PoolOnlineConfig() {
   const c = useColores()
@@ -71,12 +71,10 @@ export default function PoolOnlineConfig() {
   const [busqueda, setBusqueda] = useState('')
   const [amigos, setAmigos] = useState<Amigo[]>([])
   const [cargando, setCargando] = useState(false)
-  // ventana corta + dedupe por emisor son específicos de Pool (spec §7.2 —
-  // una invitación a jugar pierde sentido rápido); Blackjack/Poker usan el
-  // hook con su comportamiento de siempre (48h, sin dedupe)
-  const { invitaciones: candidatosInv } = useInvitacionesPendientes('invitacion_pool', {
-    ventanaMs: VENTANA_INVITACION_MS, limite: 20,
-  })
+  // la ventana corta de Pool (10 min) ya la resuelve expira_en en la base
+  // (migración 026); acá solo queda el dedupe por emisor, específico de Pool
+  // (spec §7.2 — Blackjack/Poker usan el hook tal cual, sin dedupe)
+  const { invitaciones: candidatosInv } = useInvitacionesPendientes('invitacion_pool', { limite: 20 })
   const invitaciones = useMemo(() => {
     const vistos = new Set<string>()
     return candidatosInv.filter(m => {
