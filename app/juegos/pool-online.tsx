@@ -175,6 +175,10 @@ export default function PoolOnlineConfig() {
       receptor_id: amigo.id,
       tipo: 'invitacion_pool',
       contenido,
+      // columna dedicada (no solo el JSON de contenido): la usa la policy
+      // RLS timbas_select_invitado_pool para que el invitado pueda leer la
+      // timba en la sala antes de tener fila en participantes
+      timba_id: timbaId,
     })
     router.push({
       pathname: '/juegos/sala-pool',

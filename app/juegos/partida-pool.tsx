@@ -289,20 +289,38 @@ export default function PartidaPool() {
   // RPC una vez que la partida queda en un estado terminal; es idempotente
   // (no hace nada si ya se resolvió), así que no importa si los dos
   // clientes la llaman a la vez.
+  //
+  // Auditoría jul/ago 2026: esto falló en silencio en una partida real (un
+  // trigger de DB desactualizado rechazaba el UPDATE y el .then() de acá
+  // nunca miraba .error) — la timba quedó 'activa' para siempre sin que
+  // nadie se enterara. Ahora se revisa el error, se reintenta unas veces
+  // (la RPC es idempotente, reintentar es seguro) y si sigue fallando se
+  // avisa en vez de quedar callado. [id].tsx también reintenta como red de
+  // seguridad si el usuario abre la timba a mano.
   const timbaRpcLlamadaRef = useRef(false)
   useEffect(() => {
     if (!esOnline || !fila?.timba_id) return
     if (fila.fase !== 'terminada' && fila.fase !== 'abandonada') return
     if (timbaRpcLlamadaRef.current) return
     timbaRpcLlamadaRef.current = true
-    supabase.rpc('cerrar_timba_juego', { p_partida_id: fila.id }).then(() => {
-      supabase.from('timbas')
+    const timbaId = fila.timba_id
+    const partidaId = fila.id
+    const cerrarConReintento = async (intentosRestantes: number): Promise<void> => {
+      const { error } = await supabase.rpc('cerrar_timba_juego', { p_partida_id: partidaId })
+      if (error) {
+        if (intentosRestantes > 1) return cerrarConReintento(intentosRestantes - 1)
+        timbaRpcLlamadaRef.current = false
+        avisar('No se pudo cerrar la timba automáticamente. Abrí la timba desde "Tus timbas" para reintentar.', 6000)
+        return
+      }
+      const { data } = await supabase.from('timbas')
         .select('tipo, premio_descripcion, prenda_descripcion, monto_minimo, estado, resultado_ganador')
-        .eq('id', fila.timba_id)
+        .eq('id', timbaId)
         .single()
-        .then(({ data }) => { if (data) setTimbaFinal(data as TimbaFinal) })
-    })
-  }, [esOnline, fila?.fase, fila?.timba_id, fila?.id])
+      if (data) setTimbaFinal(data as TimbaFinal)
+    }
+    cerrarConReintento(3)
+  }, [esOnline, fila?.fase, fila?.timba_id, fila?.id, avisar])
 
   // nombre del rival
   useEffect(() => {
