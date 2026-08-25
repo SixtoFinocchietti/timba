@@ -13,7 +13,7 @@ import {
 
 const ct = (t: number, a: number, b: number): EventoFisica => ({ tipo: 'contacto_bola', t, a, b, energia: 1 })
 const bd = (t: number, bola: number): EventoFisica => ({ tipo: 'banda', t, bola, energia: 1 })
-const tr = (t: number, bola: number): EventoFisica => ({ tipo: 'tronera', t, bola, tronera: 0 })
+const tr = (t: number, bola: number): EventoFisica => ({ tipo: 'tronera', t, bola, tronera: 0, x: 0, y: 0 })
 
 // bolasFinales: todas vivas salvo las listadas
 function vivasSalvo(...muertas: number[]) {

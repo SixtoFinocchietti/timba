@@ -1,5 +1,7 @@
-// Selector de skins (variantes visuales) — hoy solo taco, con `opciones`
-// genérico para reutilizar el mismo modal cuando haya variantes de mesa.
+// Selector de skins (variantes visuales) — mismo modal para taco y mesa, con
+// `opciones` genérico. La miniatura cambia de forma según qué se elige: el
+// taco es una tira apaisada y la mesa es un rectángulo vertical (1234×1852),
+// que en la caja del taco saldría aplastado.
 
 import { Image, Modal, Pressable, ScrollView, StyleSheet, Text, TouchableOpacity, View } from 'react-native'
 import { useColores } from '@/lib/ThemeContext'
@@ -17,10 +19,15 @@ interface SelectorSkinsProps {
   seleccionado: string
   onCerrar: () => void
   onElegir: (id: string) => void
+  // forma de la miniatura: 'apaisado' (taco, default) o 'vertical' (mesa)
+  formaPreview?: 'apaisado' | 'vertical'
 }
 
-export default function SelectorSkins({ visible, titulo, opciones, seleccionado, onCerrar, onElegir }: SelectorSkinsProps) {
+export default function SelectorSkins({
+  visible, titulo, opciones, seleccionado, onCerrar, onElegir, formaPreview = 'apaisado',
+}: SelectorSkinsProps) {
   const c = useColores()
+  const cajaPreview = formaPreview === 'vertical' ? es.previewWrapVertical : es.previewWrap
 
   return (
     <Modal visible={visible} transparent animationType="fade" onRequestClose={onCerrar}>
@@ -37,7 +44,7 @@ export default function SelectorSkins({ visible, titulo, opciones, seleccionado,
                 onPress={() => { onElegir(op.id); onCerrar() }}
                 activeOpacity={0.8}
               >
-                <View style={[es.previewWrap, { backgroundColor: c.fondoCard }]}>
+                <View style={[cajaPreview, { backgroundColor: c.fondoCard }]}>
                   <Image source={op.preview} style={es.preview} resizeMode="contain" />
                 </View>
                 <Text style={[es.nombre, { color: activo ? c.primario : c.texto }]}>{op.nombre}</Text>
@@ -68,6 +75,11 @@ const es = StyleSheet.create({
   },
   previewWrap: {
     width: 90, height: 36, borderRadius: 8, overflow: 'hidden',
+    alignItems: 'center', justifyContent: 'center',
+  },
+  // la mesa es 1234×1852 (vertical): caja alta para que se vea la proporción
+  previewWrapVertical: {
+    width: 62, height: 88, borderRadius: 8, overflow: 'hidden',
     alignItems: 'center', justifyContent: 'center',
   },
   preview: { width: '92%', height: '92%' },

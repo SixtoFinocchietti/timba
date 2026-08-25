@@ -46,7 +46,10 @@ function dirSegundoTramo(t: NonNullable<ReturnType<typeof calcularTrayectoriaGui
 }
 
 function bola(n: number, x: number, y: number): Bola {
-  return { n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true, rot: 0, dirX: 0, dirY: 1 }
+  return {
+    n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true,
+    rot: 0, dirX: 0, dirY: 1, qx: 0, qy: 0, qz: 0, qw: 1,
+  }
 }
 
 test('calcularGuia: tiro directo a una bola sin obstáculos', () => {

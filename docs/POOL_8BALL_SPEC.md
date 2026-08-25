@@ -24,21 +24,43 @@ las bolas se ven MÁS grandes que en landscape, y los controles quedan en zona d
 - Trade-off: landscape permite HUD a los costados sin tapar mesa; portrait obliga a HUD compacto
   arriba. Aceptable: el HUD de pool es chico (2 jugadores + bolas embocadas + timer).
 
-### D2 — Rendering: `@shopify/react-native-skia` (dependencia nueva)
+### D2 — Rendering: capas apiladas — Skia 2D (mesa/guías/taco) + three.js/expo-gl (bolas)
+
+**Actualizado ago 2026** — este documento decía originalmente que `expo-gl` + three.js era
+una alternativa descartada ("3D innecesario"). El testeo real de las bolas procedurales en
+Skia (ver diseño anterior en el historial de este archivo) no convenció: se pidió
+explícitamente el look de bolas 3D reales vistas desde arriba (referencia: la app "Plato").
+Se revirtió esa decisión, pero SOLO para las bolas — mesa, guías de tiro, taco y sombras de
+contacto siguen en Skia, sin tocar. Ver plan completo:
+`C:\Users\sixto\.claude\plans\robust-popping-koala.md`.
 
 16 bolas en movimiento + sombras + guías de tiro + partículas a 60 fps no es viable con
 Views/SVG animados. Skia es canvas GPU, tiene soporte oficial en Expo SDK 56 y se integra
 con Reanimated 4 (ya instalado).
 
-- Las **bolas se dibujan proceduralmente** (no son imágenes): círculo base de color + franja
-  blanca (rayadas) + circulito con número + gradiente radial + brillo especular. Ver §13.
-- La **mesa sí es una imagen estática** (el asset en curso): paño, maderas, troneras decorativas.
-  Encima va una capa Skia con todo lo dinámico. La geometría de colisión (bandas, bocas de
-  tronera) es lógica invisible que debe calzar con el dibujo.
-- Web: Skia usa CanvasKit (WASM ~2 MB). Cargar lazy solo al entrar al Pool, con pantalla de
-  carga con tips de juego. El resto de la app no paga ese costo.
-- Alternativas descartadas: `react-native-svg` animado (no escala a 16 cuerpos), `expo-gl` +
-  three.js (3D innecesario, curva de mantenimiento alta).
+- **Arquitectura de 3 capas apiladas**, mismo tamaño en píxeles, mismo orden pictórico que
+  tenía el `<Canvas>` original (el corte es exactamente donde antes se dibujaban las bolas):
+  `MesaPoolFondo` (Skia: mesa, sombras de contacto, debug, guías) → `MesaPoolBochas3D`
+  (three.js sobre un `GLView` de `expo-gl`: las 16 bolas) → `MesaPoolFrente` (Skia: glow de
+  bola en mano, taco).
+- **Las bolas ya NO se dibujan proceduralmente**: un único mesh `.glb` (~500 vértices)
+  reutilizado para las 16, más una textura `.jpg` por número. Ver §13 para el detalle de
+  material/luz/rotación.
+- La cámara 3D es ortográfica, en el MISMO espacio de píxeles de pantalla que ya usa
+  `tf.aPantalla`/`tf.radioBolaPx` — no hay un sistema de coordenadas 3D nuevo que mantener
+  sincronizado a mano; la capa de bolas queda alineada con el arte de la mesa gratis.
+- La **mesa sigue siendo una imagen estática** (el asset en curso): paño, maderas, troneras
+  decorativas. Encima va Skia con todo lo dinámico 2D. La geometría de colisión (bandas,
+  bocas de tronera) es lógica invisible que debe calzar con el dibujo.
+- Web: Skia usa CanvasKit (WASM ~2 MB), cargado lazy solo al entrar al Pool con pantalla de
+  tips. `expo-gl`/three.js (mucho más livianos) cargan detrás del mismo gate, sin costo
+  propio adicional para el resto de la app.
+- Por qué 3D solo para las bolas y no para toda la mesa: el pedido puntual era "que las bolas
+  se vean como Plato", no rehacer el render completo — una mesa/cámara 3D real (isométrica,
+  luces de ambiente completas) es mucho más trabajo para un beneficio marginal sobre el arte
+  2D actual, que ya funciona bien.
+- Alternativa descartada (esta sí sigue descartada): `react-native-svg` animado — no escala a
+  16 cuerpos con sombras/guías/partículas a 60 fps.
 
 ### D3 — Física: motor propio determinista en TypeScript puro (no matter-js)
 
@@ -424,14 +446,37 @@ privilegiada.
 
 ## 13. Efectos visuales / dirección de arte de las bolas
 
-**Bolas procedurales en Skia** (no sprites): círculo de color pleno → franja blanca
-horizontal (rayadas) → circulito blanco con número → gradiente radial de sombreado
-(oscurece bordes) → **highlight especular** arriba-izquierda, fijo. La rotación del patrón
-por debajo del highlight fijo produce la ilusión de esfera rodando. Beneficios: rotan de
-verdad, resolución perfecta en cualquier pantalla, tinte dinámico posible, cero peso de assets.
+**Actualizado ago 2026** — la versión anterior de esta sección describía bolas procedurales
+en Skia (círculo + patrón rotando para simular rodadura). Se reemplazó por completo: ver D2
+para el motivo (feedback real de testeo) y la arquitectura de capas.
 
-- Sombra: elipse suave desplazada (luz cenital apenas frontal), opacidad ~35%, constante.
-- Iluminación de mesa: viñeta radial (centro más claro) simulando la lámpara colgante.
+**Bolas: modelos 3D reales** (no sprites, no procedural). Un único mesh `.glb` (~500
+vértices, `GLTFLoader`) reutilizado para las 16 bolas, más una textura `.jpg` por número.
+Material `MeshStandardMaterial` (roughness ≈0, metalness 0.3) — se descartó
+`MeshPhysicalMaterial` + clearcoat porque renderizaba negro sólido de forma reproducible en
+dispositivo real, incluso con luz muy por encima de lo normal. Luz: una `AmbientLight` +
+una `DirectionalLight`, sin sombras 3D dinámicas (la mesa es 2D y no puede recibirlas — ver
+sombra de contacto abajo). Código: `src/lib/pool/bochas3d.ts` (carga de assets/material) +
+`src/components/pool/MesaPoolBochas3D.tsx` (escena three.js).
+
+- **Rotación real, no un patrón simulado**: `fisica.ts` integra un cuaternión de orientación
+  por bola cuadro a cuadro, a partir de su velocidad angular real en 3 ejes (`wx/wy/wz` —
+  el motor ya la calculaba para la física de efecto/rodadura, solo no se usaba para dibujar
+  nada). La capa 3D aplica ese cuaternión directo: cada bola gira como giraría de verdad.
+- **Highlight especular**: un plano con una textura de brillo (`brillo.png`), fijo en
+  pantalla — no cuelga del mismo nodo que gira, así que el reflejo no rota con la bola (como
+  un decal pegado al vidrio, no a la bocha).
+- **Sombra de contacto**: como la mesa sigue siendo Skia 2D, no puede recibir una sombra
+  proyectada real desde la capa 3D — se simula en `MesaPoolFondo`: una elipse suave
+  desplazada por bola (`SombraBocha`), sincronizada cuadro a cuadro con la misma posición que
+  usa la capa 3D (`tf.aPantalla`), opacidad ~32%, con blur. Mismo criterio de dirección de
+  arte que la versión anterior de esta sección, solo que ahora vive en su propio componente
+  en vez del `<Canvas>` único de antes.
+- **Caída en tronera**: la bola se encoge (escala) hacia el centro de la tronera sin recibir
+  cuaternión nuevo — mantiene su última orientación real, da sensación de que sigue girando
+  por inercia mientras desaparece. La sombra de contacto se encoge con el mismo factor.
+- Iluminación de mesa: viñeta radial (centro más claro) simulando la lámpara colgante — esto
+  sigue siendo Skia 2D, sin cambios respecto al diseño original.
 - Partículas discretas: impacto fuerte (3-5 chispas blancas), tronera (puff + destello
   dorado `c.primario`), break (onda expansiva sutil).
 - Trail de la blanca en tiros fuertes (streak con fade) — vende velocidad y peso.

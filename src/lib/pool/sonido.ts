@@ -15,6 +15,7 @@
 
 import { useEffect, useRef } from 'react'
 import { createAudioPlayer, setAudioModeAsync, type AudioPlayer } from 'expo-audio'
+import { PARAMETROS } from './fisica'
 import { ResultadoSimulacion } from './tipos'
 
 type NombreSfx = 'tock' | 'golpe_suave' | 'golpe_normal' | 'golpe_fuerte' | 'thud' | 'hueco' | 'win' | 'foul'
@@ -38,6 +39,43 @@ const POOL: Record<NombreSfx, number> = {
 // umbral de energía normalizada (0..1) que separa suave/normal/fuerte
 const UMBRAL_GOLPE_NORMAL = 0.35
 const UMBRAL_GOLPE_FUERTE = 0.7
+
+// Energía de referencia con la que se normaliza cada impacto a 0..1. Se deriva
+// de velMaxTaco en vez de ser una constante suelta: cuando la potencia del taco
+// subió (ago 2026, 8→12 m/s) el divisor fijo que había antes dejó a casi todos
+// los impactos por encima de 1, o sea todos al volumen máximo — que es
+// exactamente el "se satura al golpear" que se reportó jugando.
+const energiaRefBola = () => PARAMETROS.velMaxTaco
+const energiaRefBanda = () => PARAMETROS.velMaxTaco * 0.7
+
+// Volumen por golpe: curva sub-lineal (raíz) y techo por debajo de 1. Con la
+// curva lineal anterior, todo lo que pasara cierta fuerza quedaba pegado al
+// techo y varios golpes juntos sumaban amplitud hasta clipear.
+const VOL_BOLA_MIN = 0.22
+const VOL_BOLA_MAX = 0.72
+const VOL_BANDA_MIN = 0.15
+const VOL_BANDA_MAX = 0.55
+
+// Un rompimiento dispara ~20 contactos en menos de 200ms. Si cada uno suena a
+// su volumen pleno la suma satura y se escucha como un chasquido sucio, no
+// como una bochada. Cada golpe se atenúa según cuántos suenan casi al mismo
+// tiempo (1/√n: mantiene la sensación de "muchos" sin duplicar la amplitud).
+// Piso de atenuación: sin él, el break (15+ impactos juntos) se aplastaría
+// hasta sonar MÁS FLOJO que un tiro normal. Calibrado midiendo la mezcla real
+// (suma en potencia, que es como se combinan sonidos no correlacionados): con
+// 0.40 un break queda en ~0.80 y un tiro normal en ~0.57 — el break se
+// escucha claramente más grande y ninguno de los dos pasa de 1.0, que es
+// donde empieza a saturar.
+const VENTANA_SIMULTANEOS = 0.05 // s
+const ATENUACION_MINIMA = 0.40
+
+function factorSimultaneidad(tiempos: number[], t: number): number {
+  let n = 0
+  for (const otro of tiempos) {
+    if (Math.abs(otro - t) <= VENTANA_SIMULTANEOS) n++
+  }
+  return Math.max(ATENUACION_MINIMA, 1 / Math.sqrt(Math.max(1, n)))
+}
 
 function golpeSegunEnergia(e: number): 'golpe_suave' | 'golpe_normal' | 'golpe_fuerte' {
   if (e < UMBRAL_GOLPE_NORMAL) return 'golpe_suave'
@@ -111,24 +149,38 @@ export function useSonidoPool(habilitado: boolean, volumenMaestro = 1): SonidoPo
     timers.current.forEach(clearTimeout)
     timers.current = []
 
-    // golpe de taco al inicio, con cuerpo según la fuerza del primer impacto
-    tocar('tock', 0.85, 0.94 + Math.random() * 0.12)
+    // golpe de taco al inicio
+    tocar('tock', 0.7, 0.94 + Math.random() * 0.12)
+
+    // tiempos de los impactos audibles, para atenuar los que caen juntos
+    const refBola = energiaRefBola()
+    const refBanda = energiaRefBanda()
+    const tContactos = res.eventos
+      .filter(e => e.tipo === 'contacto_bola' && clamp(e.energia / refBola, 0, 1) >= 0.06)
+      .map(e => e.t)
+    const tBandas = res.eventos
+      .filter(e => e.tipo === 'banda' && clamp(e.energia / refBanda, 0, 1) >= 0.1)
+      .map(e => e.t)
 
     for (const ev of res.eventos) {
       const ms = ev.t * 1000
       if (ev.tipo === 'contacto_bola') {
-        const e = clamp(ev.energia / 6, 0, 1)
+        const e = clamp(ev.energia / refBola, 0, 1)
         if (e < 0.06) continue // colisiones muy suaves: silencio (techo natural de voces)
         const golpe = golpeSegunEnergia(e)
+        const vol = (VOL_BOLA_MIN + (VOL_BOLA_MAX - VOL_BOLA_MIN) * Math.sqrt(e))
+          * factorSimultaneidad(tContactos, ev.t)
         // jitter leve de pitch: variedad entre golpes del mismo sample sin
         // llegar a notarse como "estirado" (los samples ya son reales)
-        agendar(ms, () => tocar(golpe, 0.55 + 0.45 * e, 0.96 + Math.random() * 0.08))
+        agendar(ms, () => tocar(golpe, vol, 0.96 + Math.random() * 0.08))
       } else if (ev.tipo === 'banda') {
-        const e = clamp(ev.energia / 5, 0, 1)
+        const e = clamp(ev.energia / refBanda, 0, 1)
         if (e < 0.1) continue
-        agendar(ms, () => tocar('thud', 0.2 + 0.6 * e, 0.92 + e * 0.16))
+        const vol = (VOL_BANDA_MIN + (VOL_BANDA_MAX - VOL_BANDA_MIN) * Math.sqrt(e))
+          * factorSimultaneidad(tBandas, ev.t)
+        agendar(ms, () => tocar('thud', vol, 0.92 + e * 0.16))
       } else if (ev.tipo === 'tronera') {
-        agendar(ms, () => tocar('hueco', 0.9, 0.97 + Math.random() * 0.08))
+        agendar(ms, () => tocar('hueco', 0.8, 0.97 + Math.random() * 0.08))
       }
     }
   }

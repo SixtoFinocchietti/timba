@@ -1,32 +1,43 @@
-// Mesa de Pool en Skia. El fondo es el ARTE del usuario
-// (assets/pool-assets/mesa.png: marco, bandas, troneras y línea de cabecera
-// ya dibujados); encima van las capas dinámicas. La geometría física se mapea
-// al paño del dibujo vía transform.ts.
+// Orquestador de la mesa de Pool (Fase B, ago 2026). Antes este archivo
+// dibujaba TODO en un único <Canvas> de Skia, incluidas las bochas
+// procedurales (círculo + gradiente, ver historial de este archivo). Ahora
+// las bochas son modelos 3D reales (FBX + textura por número, ver
+// src/lib/pool/bochas3d.ts) — pedido explícito tras probar el rediseño 2D
+// ("quiero lo que usa Plato"). Como un <Canvas> de Skia y un <GLView> de
+// three.js son tecnologías de render distintas, no se puede seguir
+// dibujando todo junto: este componente calcula el estado compartido UNA
+// vez (transform, posiciones, guías) y apila 3 capas del mismo tamaño en
+// píxeles, en el mismo orden pictórico que tenía el <Canvas> original:
 //
-// Bolas procedurales CON RODADURA (spec §13): el patrón (franja, número, punto
-// de la blanca) orbita con la fase de rodadura que calcula el motor (rot) en
-// la dirección del movimiento — avanza por la cara, se achica hacia el borde,
-// desaparece adelante y reaparece atrás — mientras el sombreado esférico y el
-// brillo especular quedan FIJOS (la luz no gira con la bola): ese contraste es
-// lo que vende la esfera en 2D.
+//   MesaPoolFondo (Skia: mesa, debug, guías)
+//   MesaPoolBochas3D (three.js: las 16 bochas)
+//   MesaPoolFrente (Skia: glow de bola en mano, taco)
 //
-// Este archivo importa Skia: en web SOLO debe cargarse vía MesaPoolLazy
-// (después de LoadSkiaWeb). No importar directo desde pantallas.
+// El corte es exactamente el punto donde antes se dibujaban las bochas, así
+// que el z-order visual no cambió. Ver plan completo:
+// C:\Users\sixto\.claude\plans\robust-popping-koala.md
+//
+// Este archivo importa Skia (vía las capas Fondo/Frente): en web SOLO debe
+// cargarse vía MesaPoolLazy (después de LoadSkiaWeb). No importar directo
+// desde pantallas.
 
 import { useMemo } from 'react'
-import {
-  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval, Path,
-  RadialGradient, Rect, Skia, Text as SkiaText, useFont, useImage, vec,
-} from '@shopify/react-native-skia'
+import { View } from 'react-native'
+import { Skia } from '@shopify/react-native-skia'
 import { ALCANCE_BAJA, NIVEL_ASISTENCIA_DEFAULT, NivelAsistencia } from '@/lib/pool/asistencia'
-import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS, limitesJuego } from '@/lib/pool/fisica'
+import { TRONERAS } from '@/lib/pool/fisica'
 import { calcularTrayectoriaGuia } from '@/lib/pool/guia'
-import { TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
-import { ASSET_MESA, crearTransform, verticesOctagonoMesa } from '@/lib/pool/transform'
-import { Bola, MuestraAnimacion, Vec2 } from '@/lib/pool/tipos'
+import { MESA_DEFAULT, MesaSkinId, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
+import { crearTransform, verticesOctagonoMesa } from '@/lib/pool/mesaGeometria'
+import { Bola, EventoFisica, MuestraAnimacion, Vec2 } from '@/lib/pool/tipos'
+import MesaPoolFondo from './MesaPoolFondo'
+import MesaPoolBochas3D from './MesaPoolBochas3D'
+import MesaPoolFrente from './MesaPoolFrente'
 
 // Path de Skia a partir de una polilínea cerrada (usado para el octágono
-// real de la mesa: overlay de debug y clip de la capa de bolas).
+// real de la mesa: solo queda para el overlay de debug, ver MesaPoolFondo
+// — antes también recortaba la capa de bolas, ya no hace falta porque esa
+// capa es 3D).
 function pathDePoligono(vertices: Vec2[]) {
   const p = Skia.Path.Make()
   p.moveTo(vertices[0].x, vertices[0].y)
@@ -60,167 +71,64 @@ export interface MesaPoolProps {
   longitudGuiaObjetivo?: number
   // variante visual del taco (spec skins, jul 2026) — default: TACO_DEFAULT
   tacoSkin?: TacoSkinId
+  // variante visual de la mesa (ago 2026) — default: MESA_DEFAULT
+  mesaSkin?: MesaSkinId
+  // eventos del tiro en curso (ago 2026): solo se usan los 'tronera', para
+  // animar la caída — sin esto, una bocha embocada desaparecía de golpe en
+  // el frame exacto en que simularTiro la marca !viva (no había transición).
+  // Opcional y sin uso fuera de una animación activa: las pantallas que no
+  // pasan este prop (tutorial, debug) simplemente no muestran la caída.
+  eventos?: EventoFisica[]
 }
 
-const R = PARAMETROS.radioBola
-
-// colores estándar de las bolas (9..15 comparten color con n−8)
-const COLORES_BOLA: Record<number, string> = {
-  1: '#F0B428', 2: '#1E5AA8', 3: '#C93430', 4: '#5B3E8F',
-  5: '#E07B28', 6: '#1F7A4D', 7: '#8A3038', 8: '#161616',
-}
-
-const MARFIL = '#F2EFE8'
-
-// assets/pool-assets/palo_pool.png: punta (virola blanca) a la IZQUIERDA,
-// mango a la derecha — se dibuja rotado con la punta apoyada justo detrás
-// de la blanca, apuntando hacia ella. El aspecto se lee del archivo real
-// (taco.width()/height()) en vez de hardcodearlo: el asset se reemplazó
-// más de una vez durante el tuning y una constante fija quedaba desincronizada,
-// estirando la imagen (bug real detectado en auditoría, jul 2026).
-const LARGO_TACO = 1.3 // unidades de mesa (antes 1.05: se pidió más grande)
-const GROSOR_TACO_MULT = 1.3 // plus sobre la proporción real de la foto
-
-interface BolaDibujadaProps {
-  cx: number
-  cy: number
-  r: number
-  n: number
-  rot: number
-  dirPx: number // dirección de avance en PANTALLA (y hacia abajo)
-  dirPy: number
-  fuente: ReturnType<typeof useFont>
-}
-
-function BolaDibujada({ cx: cxRaw, cy: cyRaw, r, n, rot, dirPx, dirPy, fuente }: BolaDibujadaProps) {
-  // redondear a píxel: a los pocos px de radio que tiene una bola en mobile,
-  // arrastrar coordenadas de subpíxel entre frames se ve como shimmering
-  // (bug real de auditoría, jul 2026 — junto con el óvalo de tamaño fijo abajo)
-  const cx = Math.round(cxRaw)
-  const cy = Math.round(cyRaw)
-  const rayada = n >= 9
-  const color = n === 0 ? MARFIL : COLORES_BOLA[n <= 8 ? n : n - 8]
-
-  // fase de rodadura: el patrón orbita la esfera; visible si cos > 0
-  const fase = rot % (2 * Math.PI)
-  const s = Math.sin(fase)
-  const co = Math.cos(fase)
-  const offsetLocal = -s * 0.55 * r // avance del patrón: -y local = dirección de movimiento
-  const escala = 0.55 + 0.45 * Math.abs(co)
-  const patronVisible = co > 0.05
-  // marco local: -y local apunta hacia la dirección de avance en pantalla
-  const angDir = Math.atan2(dirPy, dirPx) + Math.PI / 2
-
-  const clip = Skia.Path.Make()
-  clip.addCircle(cx, cy, r)
-
-  const texto = n === 0 ? null : String(n)
-  const anchoTexto = texto && fuente ? fuente.getTextWidth(texto) : 0
-
-  return (
-    <Group>
-      {/* sombra proyectada (fija) */}
-      <Circle cx={cx + r * 0.2} cy={cy + r * 0.32} r={r} color="rgba(0,0,0,0.30)" />
-      {/* base */}
-      <Circle cx={cx} cy={cy} r={r} color={rayada ? MARFIL : color} />
-
-      {/* patrón que RUEDA (rotado hacia la dirección de avance) */}
-      <Group origin={vec(cx, cy)} transform={[{ rotate: angDir }]}>
-        {rayada && (
-          <Group clip={clip}>
-            <Rect
-              x={cx - r}
-              y={cy + offsetLocal - (r * 1.04 * (0.35 + 0.65 * Math.abs(co))) / 2}
-              width={2 * r}
-              height={r * 1.04 * (0.35 + 0.65 * Math.abs(co))}
-              color={color}
-            />
-          </Group>
-        )}
-        {patronVisible && n !== 0 && fuente && texto && (() => {
-          // parche blanco tipo "píldora": tamaño FIJO (no escala con la fase
-          // de rotación) — escalarlo generaba un jitter visible de subpíxel
-          // en bolas de pocos px de radio (bug real de auditoría, jul 2026).
-          // El ancho sigue el texto (los números de 2 dígitos, 10-15,
-          // necesitan más que un círculo) sin desbordar; el fundido de
-          // entrada/salida ahora es solo por opacidad, junto con el texto.
-          const alturaParche = r * 0.66
-          const anchoParche = Math.max(alturaParche, anchoTexto + r * 0.26)
-          return (
-            <Oval
-              x={cx - anchoParche / 2}
-              y={cy + offsetLocal - alturaParche / 2}
-              width={anchoParche}
-              height={alturaParche}
-              color={MARFIL}
-              opacity={escala}
-            />
-          )
-        })()}
-        {patronVisible && texto && fuente && (
-          <Group clip={clip}>
-            <SkiaText
-              x={cx - anchoTexto / 2}
-              y={cy + offsetLocal + r * 0.1}
-              text={texto}
-              font={fuente}
-              color={n === 8 ? MARFIL : '#161616'}
-              opacity={escala}
-            />
-          </Group>
-        )}
-        {patronVisible && n === 0 && (
-          <Circle cx={cx} cy={cy + offsetLocal} r={r * 0.14} color="#C93430" opacity={escala} />
-        )}
-      </Group>
-
-      {/* sombreado esférico + brillo: FIJOS (la luz no gira con la bola) */}
-      <Circle cx={cx} cy={cy} r={r}>
-        <RadialGradient
-          c={vec(cx - r * 0.35, cy - r * 0.4)}
-          r={r * 1.9}
-          colors={['rgba(255,255,255,0.32)', 'rgba(0,0,0,0)', 'rgba(0,0,0,0.34)']}
-          positions={[0, 0.5, 1]}
-        />
-      </Circle>
-      <Circle cx={cx - r * 0.34} cy={cy - r * 0.42} r={r * 0.15} color="rgba(255,255,255,0.85)" />
-    </Group>
-  )
-}
+// duración de la animación de caída en tronera (ver "cayendo" más abajo)
+const DURACION_CAIDA_TRONERA = 0.22 // s
 
 export default function MesaPool({
   anchoPx, bolas, muestra, angulo, fuerzaPreview, efectoLateral = 0, mostrarGuia,
   nivelAsistencia = NIVEL_ASISTENCIA_DEFAULT, anguloSugerido = null, bolaEnMano,
-  longitudGuiaObjetivo = 6, debug = false, tacoSkin = TACO_DEFAULT,
+  longitudGuiaObjetivo = 6, debug = false, tacoSkin = TACO_DEFAULT, mesaSkin = MESA_DEFAULT,
+  eventos = [],
 }: MesaPoolProps) {
   const tf = crearTransform(anchoPx)
-  const rPx = tf.radioBolaPx
-  const fondo = useImage(require('../../../assets/pool-assets/mesa.png'))
-  // las 3 variantes se cargan siempre (reglas de hooks: no se puede llamar
-  // useImage condicionalmente) y se elige cuál dibujar más abajo — son
-  // livianas (solo el taco) y evita requires dinámicos, que Metro no puede
-  // resolver.
-  const tacoPremium = useImage(require('../../../assets/pool-assets/palo_pool.png'))
-  const tacoOscuro = useImage(require('../../../assets/pool-assets/palo_pool_1.png'))
-  const tacoClaro = useImage(require('../../../assets/pool-assets/palo_pool_2.png'))
-  const taco = tacoSkin === 'premium' ? tacoPremium : tacoSkin === 'claro' ? tacoClaro : tacoOscuro
-  // feedback de juego: los números quedaban grandes; se achican de nuevo acá
-  // (y un poco más, "ligeramente") — ojo que rPx ya creció con radioBola
-  const fuenteNumero = useFont(require('../../../assets/pool-assets/fonts/Merriweather-Bold.ttf'), Math.max(7, rPx * 0.48))
 
-  // qué bolas dibujar: la animación manda, si no el estado quieto
+  // qué bolas dibujar: la animación manda, si no el estado quieto. qx/qy/qz/qw
+  // (Fase C, ago 2026): orientación real de cada bocha, integrada en
+  // fisica.ts a partir de wx/wy/wz — la capa 3D la aplica directo.
   const dibujables = muestra
-    ? muestra.bolas
-    : bolas
-        .filter(b => b.viva)
-        .map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot, dirX: b.dirX, dirY: b.dirY }))
+    ? muestra.bolas.map(b => ({ n: b.n, x: b.x, y: b.y, qx: b.qx, qy: b.qy, qz: b.qz, qw: b.qw }))
+    : bolas.filter(b => b.viva).map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, qx: b.qx, qy: b.qy, qz: b.qz, qw: b.qw }))
+
+  // bochas cayendo en una tronera: simularTiro las excluye de "dibujables"
+  // en el instante exacto en que dejan de estar vivas (bug real reportado
+  // jugando: desaparecían de golpe, sin transición) — durante los
+  // DURACION_CAIDA segundos siguientes al evento, se interpolan a mano
+  // desde la posición de captura hasta el centro de la tronera, encogiendo.
+  // Solo tiene sentido con una animación en curso (muestra != null); en el
+  // estado quieto no hay nada cayendo.
+  const cayendo = muestra
+    ? eventos
+        .filter((e): e is Extract<EventoFisica, { tipo: 'tronera' }> => e.tipo === 'tronera')
+        .map(e => ({ e, avance: (muestra.t - e.t) / DURACION_CAIDA_TRONERA }))
+        .filter(({ avance }) => avance >= 0 && avance < 1)
+        .map(({ e, avance }) => {
+          const t = avance * avance // ease-in: arranca despacio, acelera hacia el agujero
+          const centro = TRONERAS[e.tronera].centro
+          return {
+            n: e.bola,
+            x: e.x + (centro.x - e.x) * t,
+            y: e.y + (centro.y - e.y) * t,
+            escala: 1 - avance,
+          }
+        })
+    : []
 
   const blanca = bolas.find(b => b.n === 0 && b.viva)
   // niveles de asistencia (spec §2): "sin" no dibuja nada; "baja" trunca el
   // alcance a un adelanto corto sin llegar al impacto real; "normal" llega
   // completo hasta el primer evento; "maxima" además agrega el rebote en
-  // banda. El círculo del impacto y la flecha/tangente se filtran más abajo
-  // en el render, no acá — ver nota ahí.
+  // banda. El círculo del impacto y la flecha/tangente se filtran en
+  // MesaPoolFondo, no acá — ver nota ahí.
   const trayectoria = !muestra && mostrarGuia && blanca && nivelAsistencia !== 'sin'
     ? calcularTrayectoriaGuia(bolas, angulo, {
         maxRebotes: nivelAsistencia === 'maxima' ? 1 : 0,
@@ -238,224 +146,38 @@ export default function MesaPool({
     ? calcularTrayectoriaGuia(bolas, anguloSugerido, { maxRebotes: 0 })
     : null
 
-  // taco: detrás de la blanca, retrocede con la fuerza
-  const dirX = Math.cos(angulo)
-  const dirY = Math.sin(angulo)
-  const gap = 2.4 * R + fuerzaPreview * 0.34
-
-  // octágono real de la mesa (paño recortado en diagonal en cada esquina):
-  // recorta la capa de bolas para que ninguna se dibuje sobre la banda/madera
-  // (bug real, auditoría jul 2026 — ver nota en transform.ts). Memoizado: solo
-  // depende del ancho del canvas, no hace falta reconstruir el Path cada frame.
+  // octágono real de la mesa: solo se usa para el overlay de debug ahora
+  // (ver nota en pathDePoligono). Memoizado: solo depende del ancho del
+  // canvas, no hace falta reconstruir el Path cada frame.
   const octagono = useMemo(() => pathDePoligono(verticesOctagonoMesa(tf)), [anchoPx])
 
   return (
-    <Canvas style={{ width: tf.anchoPx, height: tf.altoPx }}>
-      {/* fondo: el arte de la mesa (fallback procedural mientras carga) */}
-      {fondo ? (
-        <SkiaImage image={fondo} x={0} y={0} width={tf.anchoPx} height={tf.altoPx} fit="fill" />
-      ) : (
-        <Group>
-          <Rect x={0} y={0} width={tf.anchoPx} height={tf.altoPx} color="#3A2412" />
-          <Rect
-            x={tf.anchoPx * ASSET_MESA.fx0}
-            y={tf.altoPx * ASSET_MESA.fy0}
-            width={tf.anchoPx * (ASSET_MESA.fx1 - ASSET_MESA.fx0)}
-            height={tf.altoPx * (ASSET_MESA.fy1 - ASSET_MESA.fy0)}
-            color="#155843"
-          />
-        </Group>
-      )}
-
-      {/* DEBUG temporal: geometría invisible de colisión sobre la mesa real.
-          El borde verde es el mismo octágono (verticesOctagonoMesa) que ahora
-          también recorta la capa de bolas más abajo — acá solo se dibuja su
-          contorno para diagnosticar troneras/postes de un vistazo. La física
-          sigue siendo el rectángulo completo (lx,ly) de siempre, esto no
-          cambia ningún cálculo de colisión. */}
-      {debug && (() => {
-        // amarillo: rectángulo de colisión REAL (fisica.ts: limitesJuego, lx/ly)
-        // — donde el CENTRO de una bola rebota de verdad. Es más grande que el
-        // octágono verde en las esquinas a propósito: ese octágono es solo el
-        // recorte visual (más generoso que la física para no cortar bolas en
-        // tramos rectos), no la colisión en sí. Compararlos de un vistazo sirve
-        // para calibrar el chaflán sin adivinar.
-        const { lx, ly } = limitesJuego()
-        const esqSupIzq = tf.aPantalla({ x: -lx, y: ly })
-        const esqInfDer = tf.aPantalla({ x: lx, y: -ly })
-
-        return (
-          <Group>
-            <Rect
-              x={esqSupIzq.x} y={esqSupIzq.y}
-              width={esqInfDer.x - esqSupIzq.x} height={esqInfDer.y - esqSupIzq.y}
-              style="stroke" strokeWidth={2} color="#F5B301"
-            >
-              <DashPathEffect intervals={[4, 4]} />
-            </Rect>
-            {/* verde: recorte visual de bolas (ver nota arriba) */}
-            <Path path={octagono} style="stroke" strokeWidth={2.5} color="#22C55E" />
-            {/* rojo: troneras — sólido = captura, punteado = boca (sin pared) */}
-            {TRONERAS.map(t => {
-              const p = tf.aPantalla(t.centro)
-              const rCaptura = t.captura * ((tf.sx + tf.sy) / 2)
-              const rBoca = t.boca * ((tf.sx + tf.sy) / 2)
-              return (
-                <Group key={t.id}>
-                  <Circle cx={p.x} cy={p.y} r={rCaptura} color="rgba(220,38,38,0.45)" />
-                  <Circle cx={p.x} cy={p.y} r={rBoca} style="stroke" strokeWidth={2} color="rgba(220,38,38,0.9)">
-                    <DashPathEffect intervals={[6, 5]} />
-                  </Circle>
-                </Group>
-              )
-            })}
-            {/* rojo sólido: postes de ceja con su radio de colisión real */}
-            {POSTES.map((poste, i) => {
-              const p = tf.aPantalla(poste)
-              const rPoste = RADIO_COLISION_POSTE * ((tf.sx + tf.sy) / 2)
-              return <Circle key={i} cx={p.x} cy={p.y} r={rPoste} color="rgba(185,28,28,0.95)" />
-            })}
-          </Group>
-        )
-      })()}
-
-      {/* guía de tiro (spec §2): cuánto se dibuja depende del nivel de
-          asistencia — "baja" corta en un adelanto y no muestra el círculo de
-          impacto (el punto no es real, es solo la punta del adelanto);
-          "normal" agrega el círculo (marca dónde termina lo que ya se está
-          dibujando, no es información extra); "maxima" suma la flecha del
-          objetivo, la tangente de la blanca y, si hubo, el rebote (ya viene
-          filtrado desde el cálculo de arriba vía maxRebotes). */}
-      {trayectoria && trayectoria.segmentos.length > 0 && (() => {
-        const ultimo = trayectoria.segmentos[trayectoria.segmentos.length - 1]
-        const finUltimoPx = tf.aPantalla(ultimo.fin)
-        return (
-          <Group>
-            {trayectoria.segmentos.map((seg, i) => (
-              <Line
-                key={i}
-                p1={vec(tf.aPantalla(seg.origen).x, tf.aPantalla(seg.origen).y)}
-                p2={vec(tf.aPantalla(seg.fin).x, tf.aPantalla(seg.fin).y)}
-                color={i === 0 ? 'rgba(255,255,255,0.75)' : 'rgba(255,255,255,0.4)'}
-                strokeWidth={2}
-              >
-                <DashPathEffect intervals={[9, 7]} />
-              </Line>
-            ))}
-            {nivelAsistencia !== 'baja' && (
-              <Circle
-                cx={finUltimoPx.x} cy={finUltimoPx.y} r={rPx}
-                style="stroke" strokeWidth={1.6} color="rgba(255,255,255,0.75)"
-              />
-            )}
-            {nivelAsistencia === 'maxima' && objetivo && trayectoria.dirObjetivo && (
-              <Line
-                p1={vec(tf.aPantalla(objetivo.pos).x, tf.aPantalla(objetivo.pos).y)}
-                p2={vec(
-                  tf.aPantalla({ x: objetivo.pos.x + trayectoria.dirObjetivo.x * longitudGuiaObjetivo * R, y: objetivo.pos.y + trayectoria.dirObjetivo.y * longitudGuiaObjetivo * R }).x,
-                  tf.aPantalla({ x: objetivo.pos.x + trayectoria.dirObjetivo.x * longitudGuiaObjetivo * R, y: objetivo.pos.y + trayectoria.dirObjetivo.y * longitudGuiaObjetivo * R }).y,
-                )}
-                color="#DFC47A" strokeWidth={2.5}
-              />
-            )}
-            {nivelAsistencia === 'maxima' && trayectoria.dirBlanca && (
-              <Line
-                p1={vec(finUltimoPx.x, finUltimoPx.y)}
-                p2={vec(
-                  tf.aPantalla({ x: ultimo.fin.x + trayectoria.dirBlanca.x * 4 * R, y: ultimo.fin.y + trayectoria.dirBlanca.y * 4 * R }).x,
-                  tf.aPantalla({ x: ultimo.fin.x + trayectoria.dirBlanca.x * 4 * R, y: ultimo.fin.y + trayectoria.dirBlanca.y * 4 * R }).y,
-                )}
-                color="rgba(255,255,255,0.38)" strokeWidth={2}
-              />
-            )}
-          </Group>
-        )
-      })()}
-
-      {/* sugerencia del bot en práctica libre (spec §3): mismo tipo de línea
-          que la guía propia pero en celeste, para no confundirse — queda
-          dibujada hasta que se tira (o se pide otra), a propósito: el
-          jugador la usa de referencia para alinear su propio apuntado
-          (feedback de juego real, jul 2026) — el padre (partida-pool.tsx)
-          la limpia recién en ejecutarTiro()/nuevaPartida(). */}
-      {trayectoriaSugerida && trayectoriaSugerida.segmentos.length > 0 && (
-        <Group>
-          {trayectoriaSugerida.segmentos.map((seg, i) => (
-            <Line
-              key={i}
-              p1={vec(tf.aPantalla(seg.origen).x, tf.aPantalla(seg.origen).y)}
-              p2={vec(tf.aPantalla(seg.fin).x, tf.aPantalla(seg.fin).y)}
-              color="rgba(90,200,223,0.85)"
-              strokeWidth={2.5}
-            >
-              <DashPathEffect intervals={[6, 4]} />
-            </Line>
-          ))}
-        </Group>
-      )}
-
-      {/* bolas: recortadas al octágono real de la mesa (ver nota arriba y en
-          transform.ts) — ninguna se dibuja fuera del paño, sin importar qué
-          tan cerca de una esquina permita llegar la física rectangular. */}
-      <Group clip={octagono}>
-        {dibujables.map(b => {
-          const p = tf.aPantalla({ x: b.x, y: b.y })
-          return (
-            <BolaDibujada
-              key={b.n}
-              cx={p.x}
-              cy={p.y}
-              r={rPx}
-              n={b.n}
-              rot={b.rot}
-              dirPx={b.dirX}
-              dirPy={-b.dirY}
-              fuente={fuenteNumero}
-            />
-          )
-        })}
-      </Group>
-
-      {/* glow de bola en mano */}
-      {bolaEnMano && blanca && !muestra && (
-        <Circle
-          cx={tf.aPantalla(blanca.pos).x} cy={tf.aPantalla(blanca.pos).y} r={rPx * 1.7}
-          style="stroke" strokeWidth={2.5} color="rgba(223,196,122,0.85)"
-        />
-      )}
-
-      {/* taco: imagen del usuario, rotada con la punta apoyada tras la blanca */}
-      {!muestra && blanca && !bolaEnMano && (() => {
-        const tipMesa = { x: blanca.pos.x - dirX * gap, y: blanca.pos.y - dirY * gap }
-        const buttMesa = { x: blanca.pos.x - dirX * (gap + LARGO_TACO), y: blanca.pos.y - dirY * (gap + LARGO_TACO) }
-        const tipPx = tf.aPantalla(tipMesa)
-        const buttPx = tf.aPantalla(buttMesa)
-        const largoPx = Math.hypot(buttPx.x - tipPx.x, buttPx.y - tipPx.y)
-        const anguloPx = Math.atan2(buttPx.y - tipPx.y, buttPx.x - tipPx.x)
-        // aspecto real del asset cargado (no hardcodeado: ver nota arriba)
-        const aspectoTaco = taco ? taco.height() / taco.width() : 150 / 1408
-        const altoPx = Math.max(5, largoPx * aspectoTaco * GROSOR_TACO_MULT)
-
-        if (!taco) {
-          // fallback mientras carga: dos líneas simples (mismo aspecto que antes)
-          return (
-            <Line
-              p1={vec(tipPx.x, tipPx.y)} p2={vec(buttPx.x, buttPx.y)}
-              color="#B9884A" strokeWidth={Math.max(4, rPx * 0.55)} strokeCap="round"
-            />
-          )
-        }
-        return (
-          <Group origin={vec(tipPx.x, tipPx.y)} transform={[{ rotate: anguloPx }]}>
-            <SkiaImage
-              image={taco}
-              x={tipPx.x} y={tipPx.y - altoPx / 2}
-              width={largoPx} height={altoPx}
-              fit="fill"
-            />
-          </Group>
-        )
-      })()}
-    </Canvas>
+    <View style={{ width: tf.anchoPx, height: tf.altoPx }}>
+      <MesaPoolFondo
+        tf={tf}
+        mesaSkin={mesaSkin}
+        debug={debug}
+        octagono={octagono}
+        trayectoria={trayectoria}
+        objetivo={objetivo}
+        nivelAsistencia={nivelAsistencia}
+        longitudGuiaObjetivo={longitudGuiaObjetivo}
+        trayectoriaSugerida={trayectoriaSugerida}
+        dibujables={dibujables}
+        cayendo={cayendo}
+      />
+      <MesaPoolBochas3D tf={tf} dibujables={dibujables} cayendo={cayendo} />
+      <MesaPoolFrente
+        tf={tf}
+        blanca={blanca}
+        animando={!!muestra}
+        bolaEnMano={bolaEnMano}
+        angulo={angulo}
+        fuerzaPreview={fuerzaPreview}
+        tacoSkin={tacoSkin}
+        debug={debug}
+        dibujables={dibujables}
+      />
+    </View>
   )
 }
