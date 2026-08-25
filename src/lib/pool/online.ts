@@ -61,6 +61,7 @@ export function bolasDeSnapshot(snapshot: SnapshotBola[]): Bola[] {
     rot: 0,
     dirX: 0,
     dirY: 1,
+    qx: 0, qy: 0, qz: 0, qw: 1,
   }))
 }
 

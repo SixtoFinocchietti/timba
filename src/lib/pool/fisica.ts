@@ -31,28 +31,72 @@ import {
 // ─── Parámetros (tunables; ver spec §12) ─────────────────────────────────────
 
 export const PARAMETROS = {
-  // Radio real de una bola de pool: 0.028575 (57.15mm de diámetro). Se agranda
-  // ~12% (feedback de juego: se veían chicas y algunas se superponían por
-  // pocos píxeles) — junto sube el hit-box real, no solo el dibujo, así se
-  // evita el desfasaje visual/físico que mencionó el usuario.
-  radioBola: 0.032,
+  // Radio real de una bola de pool: 0.028575 (57.15mm de diámetro). Ya se
+  // había agrandado ~12% (feedback de juego: se veían chicas) a 0.032; subido
+  // de nuevo a pedido (ago 2026, "aumentar ligeramente el tamaño") — ~19%
+  // sobre el real. El hit-box real sube junto con el dibujo (mismo R en toda
+  // la física), así que no hay desfasaje visual/físico.
+  radioBola: 0.045,
   anchoMesa: 1.12, // eje x
   altoMesa: 2.24, // eje y (mesa vertical: cabecera abajo)
   g: 9.8,
 
   // Fricciones. La rodadura real (~0.01) daría tiros eternos en pantalla:
-  // se usa un valor mayor para partidas ágiles. Tunear con la UI delante.
-  muDesliz: 0.45,
-  muRodadura: 0.28,
+  // se usa un valor mayor para partidas ágiles. Vueltos a los valores
+  // ORIGINALES (jul 2026) a pedido — esa vez se habían subido de acá
+  // (0.2/0.06) a 0.45/0.28 porque se sentían "como hielo" (bochas
+  // patinando demasiado), y en ago 2026 se bajaron de nuevo a 0.38/0.16
+  // buscando más fluidez. Ahora se prueba devolver la sensación de hielo
+  // completa a ver si es lo que estaba faltando (ago 2026, experimento
+  // explícito — el usuario tiene respaldo del estado anterior por si no
+  // convence). El bug de oscilación infinita que salió a la luz la primera
+  // vez que se subió esto ya está arreglado a nivel de código (ver
+  // integrarBola: la reducción de deslizamiento se satura a como mucho el
+  // deslizamiento actual), así que bajar el número de nuevo no debería
+  // reabrirlo.
+  muDesliz: 0.2,
+  muRodadura: 0.06,
   decaimientoWz: 0.6, // 1/s, el english se disipa exponencialmente
 
-  restBola: 0.94,
-  restBanda: 0.75,
+  // Restitución bola-bola. Se probó primero cerca de 1 (0.98) para que el
+  // impacto se sintiera más vivo, pero eso arma sin querer una "cuna de
+  // Newton": la que pega se clava y pasa TODO el impulso a la siguiente de
+  // la cadena, que hace lo mismo — una sola bocha termina absorbiendo casi
+  // toda la energía del break (rebotando bandas por metros) mientras varias
+  // del medio, fuera de esa cadena directa, casi no reciben nada (bug real
+  // reportado jugando: rompiendo, la mitad del triángulo quedaba clavado).
+  // 0.85 seguía siendo un choque con energía pero repartía mucho mejor el
+  // impulso entre toda la bochada (feedback de juego, ago 2026). Bajado a
+  // 0.80 a pedido ("más peso" en las bochas, sin tocar la fricción): menos
+  // rebote elástico en el choque en sí ⇒ se siente más sólido/menos "billar
+  // de juguete". La fricción de rodadura no se tocó — el glide entre choques
+  // sigue igual. Techo real: el "stun" (blanca casi clavada tras un corte
+  // sin efecto) depende de una restitución cercana a 1 — por debajo de
+  // ~0.78 la blanca ya no se frena del todo y el stun deja de sentirse
+  // "clavado" (medido: a 0.75 avanza 18cm en vez de <15cm). 0.80 deja
+  // margen cómodo sin perder ese tiro.
+  restBola: 0.80,
+  // Banda más viva (una banda de pool real está en ~0.85): la bochada
+  // conserva más energía tras rebotar y sigue abriéndose en vez de morir
+  // contra la primera banda que toca.
+  restBanda: 0.85,
+
+  // Throw (ago 2026): hasta acá el choque bola-bola solo tocaba la
+  // componente NORMAL — un corte salía exactamente por la línea geométrica
+  // (ghost ball), sin el desvío que produce la fricción real entre las
+  // superficies durante el contacto ("no hay throw en v1", spec §12).
+  // Coeficiente de fricción bola-bola real: ~0.03-0.06 (bochas limpias).
+  friccionBolaBola: 0.05,
+
   fricBanda: 0.2, // pérdida tangencial en banda (0..1)
   englishBanda: 0.55, // cuánto del wz·R entra a la tangencial en el rebote
   absorcionWzBanda: 0.5, // el english que se consume por rebote
 
-  velMaxTaco: 8, // m/s con fuerza = 1 (break)
+  // Velocidad con fuerza = 1. Un break fuerte real va a 11-13 m/s; estábamos
+  // en 8 (un break flojo), y esa era la causa de fondo de que el rack se
+  // abriera poco (ago 2026). Subirlo NO cambia el agarre del paño — la
+  // desaceleración se siente igual, la bochada sale con más energía.
+  velMaxTaco: 12,
   factorEnglish: 0.7, // escala del wz inicial del taco
 
   dt: 1 / 120,
@@ -71,6 +115,13 @@ export const PARAMETROS = {
   radioPosteCeja: 0.006,
 
   cooldownEventos: 0.05, // s, antirrebote de eventos repetidos (sonido/reglas)
+
+  // Contacto especulativo + pasadas de relajación (ver chocarBolas): sin
+  // esto, un racimo apretado (rack recién armado) resuelve las colisiones
+  // de a un eslabón por sub-paso — la bocha que golpea se clava y le pasa
+  // TODO el impulso a la siguiente, dejando a las demás sin nada.
+  margenContacto: 0.0015,
+  pasadasColision: 6,
 } as const
 
 const R = PARAMETROS.radioBola
@@ -193,6 +244,7 @@ function bolaNueva(n: number, x: number, y: number): Bola {
   return {
     n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0,
     viva: true, quieta: true, rot: 0, dirX: 0, dirY: 1,
+    qx: 0, qy: 0, qz: 0, qw: 1, // cuaternión identidad: sin rotación
   }
 }
 
@@ -223,9 +275,20 @@ export const CABECERA_Y = -PARAMETROS.altoMesa / 4 // línea de cabecera (break:
 
 // Rack estándar: apex = bola 1 en el pie, 8 en el centro de la tercera fila,
 // esquinas traseras de grupos distintos, resto mezclado con la seed.
+// Holgura de empaquetado + tolerancia de jitter (ver JITTER_MAX más abajo):
+// eps es el hueco base entre bochas vecinas; con eps >= 2*JITTER_MAX el jitter
+// nunca puede generar solape aunque las dos bochas de un par se desplacen
+// una hacia la otra al máximo — así el test de "sin solapes" no necesita
+// tolerancia especial. Subido de 0.8mm a 2mm (feedback de juego, ago 2026:
+// "las bochas quedan demasiado juntas") — medido que esto NO es lo que
+// explica el "mini explosión" al rozar el rack (esa dispersión viene de la
+// fricción/restitución actuales, ver comentario de PARAMETROS más arriba),
+// pero separa un poco más el dibujo, que era el pedido puntual.
+const eps = 0.002
+const JITTER_MAX = 0.0003 // ±0.3mm por eje, por bocha (< eps/2: nunca solapa)
+
 export function crearRack(seed: number): Bola[] {
   const rng = crearRng(seed)
-  const eps = 0.00005
   const dy = 2 * R * 0.8660254 + eps // filas hacia arriba (se alejan de la blanca)
   const dx = 2 * R + eps
 
@@ -269,9 +332,20 @@ export function crearRack(seed: number): Bola[] {
     }
   }
 
+  // Ningún rack armado a mano es matemáticamente perfecto (hay medio
+  // milímetro de tolerancia entre bochas reales). Sin este jitter, un break
+  // apuntado exactamente al centro reparte la fuerza en dos cadenas
+  // diagonales perfectamente simétricas y dejan "agujeros" — bochas del
+  // medio (ej. la 8) que no se mueven un milímetro (bug real reportado
+  // jugando: rompiendo derecho, la 8 y sus vecinas quedaban clavadas).
+  // Se saca de la MISMA rng seedeada (después de barajar y balancear
+  // grupos, así no altera qué número cae en qué posición) para no romper
+  // el determinismo: misma seed ⇒ mismo rack, jitter incluido.
   const bolas: Bola[] = [bolaNueva(0, 0, CABECERA_Y)]
   for (let i = 0; i < 15; i++) {
-    bolas.push(bolaNueva(asignacion[i], slots[i].x, slots[i].y))
+    const jx = (rng() - 0.5) * 2 * JITTER_MAX
+    const jy = (rng() - 0.5) * 2 * JITTER_MAX
+    bolas.push(bolaNueva(asignacion[i], slots[i].x + jx, slots[i].y + jy))
   }
   return bolas
 }
@@ -347,6 +421,37 @@ function integrarBola(b: Bola, dt: number): void {
   // el english se disipa por fricción de pivote
   b.wz -= b.wz * P.decaimientoWz * dt
 
+  // orientación real de la bocha (Fase C, ago 2026): integra el cuaternión
+  // con la velocidad angular de este substep, ya convertida a convención de
+  // PANTALLA. La mesa se dibuja con Y invertida respecto de la física (ver
+  // aPantalla en mesaGeometria.ts: screen_y = cy − y·sy), y la rodadura
+  // salía invertida (bug real, confirmado jugando: la bocha giraba al
+  // revés de hacia dónde avanzaba) con la primera conversión probada — el
+  // signo correcto, verificado contra el sentido real de giro, es
+  // (wx,wy,wz) → (wx,−wy,wz). Se integra ya en esta convención para que el
+  // consumidor (capa 3D) use qx/qy/qz/qw directo, sin reconvertir ejes.
+  {
+    const wxR = b.wx
+    const wyR = -b.wy
+    const wzR = b.wz
+    const halfDt = 0.5 * dt
+    const dqx = halfDt * (wxR * b.qw + wyR * b.qz - wzR * b.qy)
+    const dqy = halfDt * (-wxR * b.qz + wyR * b.qw + wzR * b.qx)
+    const dqz = halfDt * (wxR * b.qy - wyR * b.qx + wzR * b.qw)
+    const dqw = halfDt * (-wxR * b.qx - wyR * b.qy - wzR * b.qz)
+    b.qx += dqx
+    b.qy += dqy
+    b.qz += dqz
+    b.qw += dqw
+    const qLen = Math.sqrt(b.qx * b.qx + b.qy * b.qy + b.qz * b.qz + b.qw * b.qw)
+    if (qLen > 1e-9) {
+      b.qx /= qLen
+      b.qy /= qLen
+      b.qz /= qLen
+      b.qw /= qLen
+    }
+  }
+
   b.pos.x += b.vel.x * dt
   b.pos.y += b.vel.y * dt
   const vMagFinal = hipot(b.vel.x, b.vel.y)
@@ -369,16 +474,18 @@ function chocarBolas(b1: Bola, b2: Bola, t: number, eventos: EventoFisica[], cd:
   const dx = b2.pos.x - b1.pos.x
   const dy = b2.pos.y - b1.pos.y
   const d = hipot(dx, dy)
-  if (d >= 2 * R || d === 0) return
+  if (d >= 2 * R + PARAMETROS.margenContacto || d === 0) return
 
   const nx = dx / d
   const ny = dy / d
-  // separar el solape simétricamente
-  const solape = 2 * R - d + 0.000001
-  b1.pos.x -= (solape / 2) * nx
-  b1.pos.y -= (solape / 2) * ny
-  b2.pos.x += (solape / 2) * nx
-  b2.pos.y += (solape / 2) * ny
+  if (d < 2 * R) {
+    // separar el solape simétricamente (nada que separar si todavía no se tocan)
+    const solape = 2 * R - d + 0.000001
+    b1.pos.x -= (solape / 2) * nx
+    b1.pos.y -= (solape / 2) * ny
+    b2.pos.x += (solape / 2) * nx
+    b2.pos.y += (solape / 2) * ny
+  }
 
   const vRelN = (b1.vel.x - b2.vel.x) * nx + (b1.vel.y - b2.vel.y) * ny
   if (vRelN <= 0) return // ya se separan
@@ -388,7 +495,42 @@ function chocarBolas(b1: Bola, b2: Bola, t: number, eventos: EventoFisica[], cd:
   b1.vel.y -= j * ny
   b2.vel.x += j * nx
   b2.vel.y += j * ny
+  // las dos, no solo b2: en el rack, cuál de las dos estaba quieta antes de
+  // este choque depende del orden del array (posición original en el rack),
+  // no de quién pega — una bocha QUIETA que recibe impulso como b1 quedaba
+  // con velocidad pero sin este flag, así que integrarBola la seguía
+  // saltando (se "congelaba" con velocidad fantasma mientras el resto de la
+  // física asumía que se había movido) — bug real, causa de fondo de las
+  // bochas apiladas reportadas jugando.
+  b1.quieta = false
   b2.quieta = false
+
+  // Throw: fricción en el punto de contacto durante el choque. El punto de
+  // contacto de cada bola es su superficie hacia la otra (r = R·n̂ para b1,
+  // −R·n̂ para b2) — con las dos en el mismo plano, SOLO el spin vertical
+  // (wz, el "efecto") mete velocidad tangencial ahí; wx/wy (el eje de
+  // rodadura) no aportan porque su radio de contacto con el paño es vertical,
+  // no horizontal. vRelT es esa velocidad de deslizamiento en el punto de
+  // contacto (CM tangencial + el aporte de wz de las dos bolas):
+  const tx = -ny
+  const ty = nx
+  const vt0 = (b1.vel.x - b2.vel.x) * tx + (b1.vel.y - b2.vel.y) * ty
+  const vRelT = vt0 + R * (b1.wz + b2.wz)
+  if (Math.abs(vRelT) > 1e-9) {
+    // acotado por Coulomb (μ·j) y por lo que hace falta para frenar del todo
+    // el deslizamiento (el factor 7 sale de la inercia de una esfera maciza:
+    // I=(2/5)R² acoplando traslación y spin en esta geometría de contacto,
+    // mismo tipo de derivación que el 3.5/2.5 de integrarBola con el paño)
+    const limite = Math.min(PARAMETROS.friccionBolaBola * j, Math.abs(vRelT) / 7)
+    const jt = -Math.sign(vRelT) * limite
+    b1.vel.x += jt * tx
+    b1.vel.y += jt * ty
+    b2.vel.x -= jt * tx
+    b2.vel.y -= jt * ty
+    const dwz = (5 / (2 * R)) * jt
+    b1.wz += dwz
+    b2.wz += dwz
+  }
 
   const clave = b1.n * 16 + b2.n
   const ultimo = cd.pares.get(clave) ?? -1
@@ -495,7 +637,10 @@ export function simularTiro(bolasIniciales: Bola[], tiro: Tiro, opts?: OpcionesS
       t,
       bolas: bolas
         .filter(b => b.viva)
-        .map(b => ({ n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot, dirX: b.dirX, dirY: b.dirY })),
+        .map(b => ({
+          n: b.n, x: b.pos.x, y: b.pos.y, rot: b.rot, dirX: b.dirX, dirY: b.dirY,
+          qx: b.qx, qy: b.qy, qz: b.qz, qw: b.qw,
+        })),
     })
   }
   muestrear()
@@ -518,15 +663,28 @@ export function simularTiro(bolasIniciales: Bola[], tiro: Tiro, opts?: OpcionesS
         integrarBola(b, dtSub)
       }
 
-      // colisiones bola-bola (16 cuerpos: O(n²) alcanza de sobra)
-      for (let i = 0; i < bolas.length; i++) {
-        const b1 = bolas[i]
-        if (!b1.viva) continue
-        for (let j = i + 1; j < bolas.length; j++) {
-          const b2 = bolas[j]
-          if (!b2.viva) continue
-          if (b1.quieta && b2.quieta) continue
-          chocarBolas(b1, b2, tSub, eventos, cd)
+      // colisiones bola-bola (16 cuerpos: O(n²) alcanza de sobra). Varias
+      // pasadas por sub-paso (relajación de Gauss-Seidel, mismas posiciones,
+      // velocidades ya actualizadas entre pasada y pasada): en un racimo muy
+      // apretado (el rack recién armado) una sola pasada solo empuja la
+      // cadena de contacto UN eslabón — la bocha que golpea se clava y le
+      // pasa TODO el impulso a la siguiente, dejando a las demás sin nada
+      // (bug real reportado jugando: rompiendo con la blanca apenas
+      // descentrada, media mesa se quedaba clavada). Repetir la resolución
+      // en el mismo instante deja que el impulso se reparta por TODA la
+      // cadena en vez de un solo relevo — junto con margenContacto en
+      // chocarBolas (si no, la segunda colisión de la cadena no cuenta como
+      // "en contacto" hasta que la bocha recorra el huequito eps).
+      for (let pasada = 0; pasada < PARAMETROS.pasadasColision; pasada++) {
+        for (let i = 0; i < bolas.length; i++) {
+          const b1 = bolas[i]
+          if (!b1.viva) continue
+          for (let j = i + 1; j < bolas.length; j++) {
+            const b2 = bolas[j]
+            if (!b2.viva) continue
+            if (b1.quieta && b2.quieta) continue
+            chocarBolas(b1, b2, tSub, eventos, cd)
+          }
         }
       }
 
@@ -561,7 +719,7 @@ export function simularTiro(bolasIniciales: Bola[], tiro: Tiro, opts?: OpcionesS
           b.wx = 0
           b.wy = 0
           b.wz = 0
-          eventos.push({ tipo: 'tronera', t: tSub, bola: b.n, tronera: capturada.id })
+          eventos.push({ tipo: 'tronera', t: tSub, bola: b.n, tronera: capturada.id, x: b.pos.x, y: b.pos.y })
           continue
         }
 
@@ -578,8 +736,17 @@ export function simularTiro(bolasIniciales: Bola[], tiro: Tiro, opts?: OpcionesS
           }
         }
 
-        // ¿se durmió?
-        if (hipot(b.vel.x, b.vel.y) < P.umbralReposo && Math.abs(b.wz) < 0.5) {
+        // ¿se durmió? El wz (efecto vertical) no entra en esta condición a
+        // propósito: no tiene ningún efecto visual ni físico una vez que la
+        // bocha dejó de trasladarse (no se dibuja un giro en el lugar, y
+        // wz no realimenta vel/wx/wy) — solo importa MIENTRAS la bocha
+        // sigue en movimiento, para el próximo choque. Antes del throw
+        // (ago 2026) esto no se notaba porque solo la blanca podía tener
+        // wz, con valores chicos que decaían rápido; ahora cualquier bocha
+        // golpeada puede acumular algo, y esperar a que decaiga por debajo
+        // de 0.5 llegaba a estirar un tiro de 1.6s a 7s+ sin que se viera
+        // nada distinto en pantalla (bug real, detectado midiendo breaks).
+        if (hipot(b.vel.x, b.vel.y) < P.umbralReposo) {
           const ux = b.vel.x - R * b.wy
           const uy = b.vel.y + R * b.wx
           if (hipot(ux, uy) < P.umbralDesliz) {

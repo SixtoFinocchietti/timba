@@ -27,7 +27,10 @@ import SelectorSpin, { Spin } from '@/components/pool/SelectorSpin'
 import { useSonidoPool } from '@/lib/pool/sonido'
 import { useMusicaPool } from '@/lib/pool/musica'
 import { haptica } from '@/lib/pool/haptica'
-import { CLAVE_TACO_SKIN, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
+import {
+  CLAVE_MESA_SKIN, CLAVE_TACO_SKIN, MESA_DEFAULT, MesaSkinId,
+  OPCIONES_MESA, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId,
+} from '@/lib/pool/skins'
 import { CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NivelAsistencia } from '@/lib/pool/asistencia'
 import {
   CABECERA_Y, clonarBolas, crearRack, crearRng, PARAMETROS, posicionBlancaValida, simularTiro,
@@ -41,7 +44,7 @@ import {
   esDelGrupo, resolverTimeout, resolverTiro, rival,
 } from '@/lib/pool/reglas'
 import { crearTransform, RELACION_ASPECTO, SENSIBILIDAD_APUNTADO } from '@/lib/pool/transform'
-import { Bola, MuestraAnimacion, ResultadoSimulacion, Tiro } from '@/lib/pool/tipos'
+import { Bola, EventoFisica, MuestraAnimacion, ResultadoSimulacion, Tiro } from '@/lib/pool/tipos'
 
 const AJUSTE_FINO = (0.25 * Math.PI) / 180
 // Fase 9 (auditoría técnica jul 2026): gracia en DOS niveles, no una sola.
@@ -138,11 +141,16 @@ export default function PartidaPool() {
   const [spin, setSpin] = useState<Spin>({ a: 0, b: 0 })
   const [fuerza, setFuerza] = useState(0)
   const [muestra, setMuestra] = useState<MuestraAnimacion | null>(null)
+  // eventos del tiro que se está animando (solo para la caída en tronera de
+  // MesaPool — ver su comentario) — se pisan en cada animar(), no hace
+  // falta limpiarlos por separado cuando termina
+  const [eventosAnimacion, setEventosAnimacion] = useState<EventoFisica[]>([])
   const [animando, setAnimando] = useState(false)
   const [pensando, setPensando] = useState(false)
   const [bolaEnManoPractica, setBolaEnManoPractica] = useState(false)
   const [spinAbierto, setSpinAbierto] = useState(false)
   const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
+  const [mesaSkin, setMesaSkin] = useState<MesaSkinId>(MESA_DEFAULT)
   const [nivelAsistencia, setNivelAsistencia] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
   const [anguloSugerido, setAnguloSugerido] = useState<number | null>(null)
   const [ultimoReplay, setUltimoReplay] = useState<ReplayTiro | null>(null)
@@ -214,6 +222,9 @@ export default function PartidaPool() {
     AsyncStorage.getItem('@timba:pool_volumen_musica').then(v => { if (v) setVolumenMusica(parseFloat(v)) })
     AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
       if (v && OPCIONES_TACO.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+    })
+    AsyncStorage.getItem(CLAVE_MESA_SKIN).then(v => {
+      if (v && OPCIONES_MESA.some(m => m.id === v)) setMesaSkin(v as MesaSkinId)
     })
     AsyncStorage.getItem(CLAVE_NIVEL_ASISTENCIA).then(v => {
       if (v === 'sin' || v === 'baja' || v === 'normal' || v === 'maxima') setNivelAsistencia(v)
@@ -494,6 +505,7 @@ export default function PartidaPool() {
 
   function animar(res: ResultadoSimulacion, alTerminar: () => void) {
     setAnimando(true)
+    setEventosAnimacion(res.eventos)
     // sonido agendado por los timestamps de los eventos + tacazo/vibración inicial
     sfx.reproducirTiro(res)
     musicaAmbiente.reducir() // no tapar los efectos mientras corre la animación
@@ -1074,6 +1086,8 @@ export default function PartidaPool() {
                   bolaEnMano={bolaEnMano}
                   longitudGuiaObjetivo={esBot && dificultad === 'facil' ? 40 : 6}
                   tacoSkin={tacoSkin}
+                  mesaSkin={mesaSkin}
+                  eventos={eventosAnimacion}
                 />
               </View>
             </GestureDetector>

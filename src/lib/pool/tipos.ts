@@ -28,6 +28,17 @@ export interface Bola {
   // dónde "avanza" el patrón al rodar; persiste al frenar
   dirX: number
   dirY: number
+  // Orientación real de la bocha (cuaternión, unitario), integrada a partir
+  // de wx/wy/wz cada substep en integrarBola() — a diferencia de "rot" (un
+  // escalar 2D "de mentira" que ya no se usa para dibujar), esto es la
+  // rotación 3D real de la esfera, consumida por la capa 3D (Fase C, ago
+  // 2026). Ya en convención de PANTALLA (Y invertida respecto de la mesa,
+  // igual que aPantalla en mesaGeometria.ts) para que el render la use
+  // directa, sin reconvertir ejes.
+  qx: number
+  qy: number
+  qz: number
+  qw: number
 }
 
 // Input completo de un tiro. Es lo ÚNICO que viaja por la red (más el snapshot
@@ -43,12 +54,18 @@ export interface Tiro {
 export type EventoFisica =
   | { tipo: 'contacto_bola'; t: number; a: number; b: number; energia: number }
   | { tipo: 'banda'; t: number; bola: number; energia: number }
-  | { tipo: 'tronera'; t: number; bola: number; tronera: number }
+  // x/y: posición justo antes de caer (para animar la caída en el render —
+  // simularTiro ya no la reporta en ninguna muestra desde ese instante,
+  // porque deja de estar viva)
+  | { tipo: 'tronera'; t: number; bola: number; tronera: number; x: number; y: number }
 
 // Una muestra de animación por frame de render (60 fps): posiciones de bolas vivas.
 export interface MuestraAnimacion {
   t: number
-  bolas: { n: number; x: number; y: number; rot: number; dirX: number; dirY: number }[]
+  bolas: {
+    n: number; x: number; y: number; rot: number; dirX: number; dirY: number
+    qx: number; qy: number; qz: number; qw: number
+  }[]
 }
 
 export interface SnapshotBola {

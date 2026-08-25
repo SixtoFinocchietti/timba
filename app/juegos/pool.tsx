@@ -9,7 +9,10 @@ import { CLAVE_PROGRESO, LECCIONES } from '@/lib/pool/tutorial'
 import {
   CLAVE_NIVEL_ASISTENCIA, NIVEL_ASISTENCIA_DEFAULT, NIVELES_ASISTENCIA, NivelAsistencia,
 } from '@/lib/pool/asistencia'
-import { CLAVE_TACO_SKIN, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId } from '@/lib/pool/skins'
+import {
+  CLAVE_MESA_SKIN, CLAVE_TACO_SKIN, MESA_DEFAULT, MesaSkinId,
+  OPCIONES_MESA, OPCIONES_TACO, TACO_DEFAULT, TacoSkinId,
+} from '@/lib/pool/skins'
 import SelectorSkins from '@/components/pool/SelectorSkins'
 
 // Menú del Pool (spec §2.1). Fases 2-3: práctica libre y 8-ball vs Bot;
@@ -44,10 +47,12 @@ export default function PoolMenu() {
   const es = makeEstilos(c)
   const [sheetBot, setSheetBot] = useState(false)
   const [sheetAjustes, setSheetAjustes] = useState(false)
-  const [skinsAbierto, setSkinsAbierto] = useState(false)
+  // qué catálogo de skins está abierto en el selector (null = cerrado)
+  const [skinsAbierto, setSkinsAbierto] = useState<'taco' | 'mesa' | null>(null)
   const [progresoTutorial, setProgresoTutorial] = useState(0)
   const [nivelAsistencia, setNivelAsistencia] = useState<NivelAsistencia>(NIVEL_ASISTENCIA_DEFAULT)
   const [tacoSkin, setTacoSkin] = useState<TacoSkinId>(TACO_DEFAULT)
+  const [mesaSkin, setMesaSkin] = useState<MesaSkinId>(MESA_DEFAULT)
 
   useFocusEffect(
     useCallback(() => {
@@ -59,6 +64,9 @@ export default function PoolMenu() {
       })
       AsyncStorage.getItem(CLAVE_TACO_SKIN).then(v => {
         if (v && OPCIONES_TACO.some(t => t.id === v)) setTacoSkin(v as TacoSkinId)
+      })
+      AsyncStorage.getItem(CLAVE_MESA_SKIN).then(v => {
+        if (v && OPCIONES_MESA.some(m => m.id === v)) setMesaSkin(v as MesaSkinId)
       })
     }, []),
   )
@@ -85,6 +93,11 @@ export default function PoolMenu() {
   function elegirTacoSkin(id: string) {
     setTacoSkin(id as TacoSkinId)
     AsyncStorage.setItem(CLAVE_TACO_SKIN, id)
+  }
+
+  function elegirMesaSkin(id: string) {
+    setMesaSkin(id as MesaSkinId)
+    AsyncStorage.setItem(CLAVE_MESA_SKIN, id)
   }
 
   return (
@@ -197,7 +210,7 @@ export default function PoolMenu() {
           <Text style={[es.sheetSeccion, { color: c.textoSuave, marginTop: 14 }]}>TACO</Text>
           <TouchableOpacity
             style={[es.sheetOpcionChica, { backgroundColor: c.fondoInput, borderColor: c.borde }]}
-            onPress={() => setSkinsAbierto(true)}
+            onPress={() => setSkinsAbierto('taco')}
             activeOpacity={0.8}
           >
             <View style={es.sheetOpcionTexto}>
@@ -208,16 +221,41 @@ export default function PoolMenu() {
             </View>
             <Text style={[es.chevron, { color: c.textoSuave }]}>›</Text>
           </TouchableOpacity>
+
+          <Text style={[es.sheetSeccion, { color: c.textoSuave, marginTop: 14 }]}>MESA</Text>
+          <TouchableOpacity
+            style={[es.sheetOpcionChica, { backgroundColor: c.fondoInput, borderColor: c.borde }]}
+            onPress={() => setSkinsAbierto('mesa')}
+            activeOpacity={0.8}
+          >
+            <View style={es.sheetOpcionTexto}>
+              <Text style={[es.sheetOpcionNombre, { color: c.texto }]}>
+                {OPCIONES_MESA.find(m => m.id === mesaSkin)?.nombre ?? 'Mesa'}
+              </Text>
+              <Text style={[es.sheetOpcionDesc, { color: c.textoSuave }]}>Toca para elegir tu mesa por defecto</Text>
+            </View>
+            <Text style={[es.chevron, { color: c.textoSuave }]}>›</Text>
+          </TouchableOpacity>
         </View>
       </Modal>
 
       <SelectorSkins
-        visible={skinsAbierto}
+        visible={skinsAbierto === 'taco'}
         titulo="Elegí tu taco"
         opciones={OPCIONES_TACO}
         seleccionado={tacoSkin}
-        onCerrar={() => setSkinsAbierto(false)}
+        onCerrar={() => setSkinsAbierto(null)}
         onElegir={elegirTacoSkin}
+      />
+
+      <SelectorSkins
+        visible={skinsAbierto === 'mesa'}
+        titulo="Elegí tu mesa"
+        opciones={OPCIONES_MESA}
+        seleccionado={mesaSkin}
+        formaPreview="vertical"
+        onCerrar={() => setSkinsAbierto(null)}
+        onElegir={elegirMesaSkin}
       />
     </View>
   )

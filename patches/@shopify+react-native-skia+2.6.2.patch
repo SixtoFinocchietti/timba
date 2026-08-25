@@ -1,0 +1,104 @@
+diff --git a/node_modules/@shopify/react-native-skia/lib/module/Platform/Platform.web.js b/node_modules/@shopify/react-native-skia/lib/module/Platform/Platform.web.js
+index 1121801..aa1b250 100644
+--- a/node_modules/@shopify/react-native-skia/lib/module/Platform/Platform.web.js
++++ b/node_modules/@shopify/react-native-skia/lib/module/Platform/Platform.web.js
+@@ -122,7 +122,13 @@ const View = ({
+ };
+ export const Platform = {
+   OS: "web",
+-  PixelRatio: typeof window !== "undefined" ? window.devicePixelRatio : 1,
++  // getter, no valor fijo: window.devicePixelRatio cambia con el zoom del
++  // navegador (y con mover la ventana a una pantalla de otra densidad). Un
++  // valor capturado una sola vez al cargar el módulo queda viejo apenas el
++  // usuario hace zoom — parche vía patch-package, ver patches/.
++  get PixelRatio() {
++    return typeof window !== "undefined" ? window.devicePixelRatio : 1;
++  },
+   // window is not defined on node
+   resolveAsset: source => {
+     if (isRNModule(source)) {
+diff --git a/node_modules/@shopify/react-native-skia/lib/module/views/SkiaPictureView.web.js b/node_modules/@shopify/react-native-skia/lib/module/views/SkiaPictureView.web.js
+index 7318000..4784c3d 100644
+--- a/node_modules/@shopify/react-native-skia/lib/module/views/SkiaPictureView.web.js
++++ b/node_modules/@shopify/react-native-skia/lib/module/views/SkiaPictureView.web.js
+@@ -21,7 +21,9 @@ const dp2Pixel = (pd, rect) => {
+ class WebGLRenderer {
+   constructor(canvas, pd) {
+     this.canvas = canvas;
+-    this.pd = pd;
++    // pd (densidad de píxeles) SIEMPRE fresco acá, no el que le pasó el
++    // caller (que puede venir de un closure viejo) — ver patches/.
++    this.pd = Platform.PixelRatio;
+     _defineProperty(this, "surface", null);
+     this.onResize();
+   }
+@@ -37,11 +39,21 @@ class WebGLRenderer {
+   }
+   onResize() {
+     const {
+-      canvas,
+-      pd
++      canvas
+     } = this;
+-    canvas.width = canvas.clientWidth * pd;
+-    canvas.height = canvas.clientHeight * pd;
++    // pd fresco de nuevo (no el capturado en el constructor: onResize()
++    // puede correr de nuevo mucho después, con el navegador ya en otro zoom)
++    const pd = Platform.PixelRatio;
++    this.pd = pd;
++    // getBoundingClientRect() en vez de clientWidth/clientHeight: estos
++    // últimos redondean a entero de CSS px — con bochas de pocos px de
++    // radio ese redondeo alcanza para desproporcionar el círculo (bug real
++    // reportado jugando: los números/círculos se veían ovalados, sobre
++    // todo tras hacer zoom). getBoundingClientRect da el tamaño real con
++    // sub-píxel, sin ese error de redondeo previo a multiplicar por pd.
++    const rect = canvas.getBoundingClientRect();
++    canvas.width = Math.round(rect.width * pd);
++    canvas.height = Math.round(rect.height * pd);
+     const surface = CanvasKit.MakeWebGLCanvasSurface(canvas);
+     const ctx = canvas.getContext("webgl2");
+     if (ctx) {
+@@ -75,14 +87,20 @@ class WebGLRenderer {
+ class StaticWebGLRenderer {
+   constructor(canvas, pd) {
+     this.canvas = canvas;
+-    this.pd = pd;
++    // pd fresco, no el que pasó el caller — ver patches/ y WebGLRenderer arriba
++    this.pd = Platform.PixelRatio;
+     _defineProperty(this, "cachedImage", null);
+   }
+   onResize() {
+     this.cachedImage = null;
++    // pd puede haber cambiado (zoom) desde el constructor
++    this.pd = Platform.PixelRatio;
+   }
+   renderPictureToSurface(picture) {
+-    const tempCanvas = new OffscreenCanvas(this.canvas.clientWidth * this.pd, this.canvas.clientHeight * this.pd);
++    // getBoundingClientRect(): ver nota en WebGLRenderer.onResize() más
++    // arriba (clientWidth/clientHeight redondean a entero de CSS px).
++    const rectS = this.canvas.getBoundingClientRect();
++    const tempCanvas = new OffscreenCanvas(Math.round(rectS.width * this.pd), Math.round(rectS.height * this.pd));
+     let surface = null;
+     try {
+       const webglSurface = CanvasKit.MakeWebGLCanvasSurface(tempCanvas);
+@@ -135,12 +153,16 @@ class StaticWebGLRenderer {
+       throw new Error("Could not get 2D context");
+     }
+ 
+-    // Set canvas dimensions to match pixel density
+-    this.canvas.width = this.canvas.clientWidth * this.pd;
+-    this.canvas.height = this.canvas.clientHeight * this.pd;
++    // Set canvas dimensions to match pixel density (getBoundingClientRect,
++    // no clientWidth/clientHeight — ver nota en WebGLRenderer.onResize())
++    const rectD = this.canvas.getBoundingClientRect();
++    const wD = Math.round(rectD.width * this.pd);
++    const hD = Math.round(rectD.height * this.pd);
++    this.canvas.width = wD;
++    this.canvas.height = hD;
+ 
+     // Draw the tempCanvas scaled down to the display size
+-    ctx2d.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, this.canvas.clientWidth * this.pd, this.canvas.clientHeight * this.pd);
++    ctx2d.drawImage(tempCanvas, 0, 0, tempCanvas.width, tempCanvas.height, 0, 0, wD, hD);
+     this.cleanupWebGLContext(tempCanvas);
+   }
+   makeImageSnapshot(picture, rect) {

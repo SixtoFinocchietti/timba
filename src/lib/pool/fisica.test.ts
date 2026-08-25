@@ -12,7 +12,10 @@ import { Bola, Tiro } from './tipos'
 const R = PARAMETROS.radioBola
 
 function bola(n: number, x: number, y: number): Bola {
-  return { n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true, rot: 0, dirX: 0, dirY: 1 }
+  return {
+    n, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true,
+    rot: 0, dirX: 0, dirY: 1, qx: 0, qy: 0, qz: 0, qw: 1,
+  }
 }
 
 function tiro(parcial: Partial<Tiro>): Tiro {
@@ -116,7 +119,10 @@ test('banda: rebote registra evento y devuelve la bola; el english cambia la sal
   const hacia = Math.atan2(0.3, 0.56) // hacia la banda derecha, subiendo
   const sinEfecto = simularTiro(base, tiro({ angulo: hacia, fuerza: 0.35, efectoLateral: 0 }))
   assert.ok(sinEfecto.eventos.some(e => e.tipo === 'banda' && e.bola === 0), 'hubo rebote en banda')
-  assert.ok(finalDe(sinEfecto.bolas, 0).pos.x < 0.45, 'volvió de la banda')
+  // margen generoso: con fricción muy baja la bola rebota varias veces antes
+  // de asentarse (4 bandas en vez de 1), pero igual queda lejos de la pared
+  // real (lx≈0.528) — el punto es que no se pega, no una distancia exacta
+  assert.ok(finalDe(sinEfecto.bolas, 0).pos.x < 0.51, 'volvió de la banda')
 
   const conEfecto = simularTiro(base, tiro({ angulo: hacia, fuerza: 0.35, efectoLateral: 1 }))
   const dSalida = Math.hypot(
@@ -135,11 +141,17 @@ test('tronera: apuntada al centro cae; apuntada al lado rebota (ceja/pared)', ()
   assert.ok(r1.eventos.some(e => e.tipo === 'tronera' && e.bola === 0), 'la bola cayó en la tronera')
   assert.equal(finalDe(r1.bolas, 0).viva, false)
 
-  // a la pared derecha, lejos de la boca: rebota en vez de caer ahí
+  // a la pared derecha, lejos de la boca: rebota en vez de caer ahí. Fuerza
+  // bajada de 0.22 a 0.14 (fricción muy baja, ago 2026): con 0.22 la bola
+  // conservaba tanta energía que después de 2 bandas terminaba, por
+  // casualidad de esa geometría puntual, entrando a OTRA tronera — no
+  // significa que cualquier tiro a la pared ahora caiga solo, es este tiro
+  // puntual el que alineaba mal; con menos fuerza rebota una vez y se
+  // asienta, que es lo que el test quiere verificar.
   const objetivo = { x: PARAMETROS.anchoMesa / 2, y: 0.7 }
   const origen = { x: 0.1, y: 0.55 }
   const alLado = Math.atan2(objetivo.y - origen.y, objetivo.x - origen.x)
-  const r2 = simularTiro([bola(0, origen.x, origen.y)], tiro({ angulo: alLado, fuerza: 0.22 }))
+  const r2 = simularTiro([bola(0, origen.x, origen.y)], tiro({ angulo: alLado, fuerza: 0.14 }))
   assert.ok(r2.eventos.some(e => e.tipo === 'banda'), 'rebotó en la banda')
   assert.equal(finalDe(r2.bolas, 0).viva, true, 'siguió en la mesa')
 })

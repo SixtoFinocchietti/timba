@@ -17,7 +17,10 @@ import { crearTransform, RELACION_ASPECTO } from '@/lib/pool/transform'
 import { Bola } from '@/lib/pool/tipos'
 
 function bolaBlanca(x: number, y: number): Bola {
-  return { n: 0, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true, rot: 0, dirX: 0, dirY: 1 }
+  return {
+    n: 0, pos: { x, y }, vel: { x: 0, y: 0 }, wx: 0, wy: 0, wz: 0, viva: true, quieta: true,
+    rot: 0, dirX: 0, dirY: 1, qx: 0, qy: 0, qz: 0, qw: 1,
+  }
 }
 
 export default function DebugPool() {

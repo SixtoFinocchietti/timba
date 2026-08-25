@@ -12,7 +12,7 @@
 // ella. `tipo` acepta un array para la pantalla única de Invitaciones, que
 // necesita traer varios tipos de una sola vez.
 
-import { useState, useEffect, useCallback, useMemo } from 'react'
+import { useState, useEffect, useCallback, useMemo, useId } from 'react'
 import { supabase } from '@/lib/supabase'
 import { useAuthStore } from '@/store/authStore'
 
@@ -47,6 +47,13 @@ export function useInvitacionesPendientes(
   const [invitaciones, setInvitaciones] = useState<InvitacionPendiente[]>([])
   const tiposKey = Array.isArray(tipo) ? tipo.join(',') : tipo
   const tipos = useMemo(() => tiposKey.split(','), [tiposKey])
+  // id único por instancia del hook: el Drawer (badge, siempre montado) y una
+  // pantalla como app/invitaciones.tsx pueden pedir los mismos tipos al mismo
+  // tiempo, lo que arma el mismo nombre de canal realtime — sin esto, la
+  // segunda instancia reutiliza el canal ya suscripto de la primera y
+  // .on() explota con "cannot add postgres_changes callbacks ... after
+  // subscribe()" (bug real reportado en el celular, ago 2026).
+  const idInstancia = useId()
 
   const cargar = useCallback(async () => {
     if (!usuario?.id) return
@@ -81,7 +88,7 @@ export function useInvitacionesPendientes(
     if (!usuario?.id) return
     cargar()
     const canal = supabase
-      .channel(`invitaciones-${tiposKey}-${usuario.id}`)
+      .channel(`invitaciones-${tiposKey}-${usuario.id}-${idInstancia}`)
       .on('postgres_changes', {
         event: 'INSERT', schema: 'public', table: 'mensajes',
         filter: `receptor_id=eq.${usuario.id}`,
