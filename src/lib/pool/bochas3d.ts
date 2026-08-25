@@ -1,16 +1,16 @@
-// Carga de assets 3D de las bochas (FBX + texturas + material) — Fase B
+// Carga de assets 3D de las bochas (GLB + texturas + material) — Fase B
 // del plan de bochas 3D (ago 2026, ver
 // C:\Users\sixto\.claude\plans\robust-popping-koala.md). Todo cacheado a
 // nivel de módulo (una promesa por recurso): la geometría y las 16
 // texturas se cargan UNA sola vez por sesión de la app — sin esto, entrar
 // y salir de la mesa de pool (practica/bot/online) rehace el fetch +
-// parseo del FBX y las 16 texturas cada vez, con el flash de carga que eso
+// parseo del GLB y las 16 texturas cada vez, con el flash de carga que eso
 // implica.
 //
-// El material vive acá (no en debug-bocha3d.tsx ni en MesaPoolBochas3D)
-// para que cualquier ajuste futuro de "brillo" se aplique en un solo lugar
-// y no se desincronicen — ver la nota junto a cargarMaterialBola sobre por
-// qué es MeshStandardMaterial y no MeshPhysicalMaterial+clearcoat.
+// El material vive acá (no en MesaPoolBochas3D) para que cualquier ajuste
+// futuro de "brillo" se aplique en un solo lugar y no se desincronicen —
+// ver la nota junto a cargarMaterialBola sobre por qué es
+// MeshStandardMaterial y no MeshPhysicalMaterial+clearcoat.
 
 import { Platform } from 'react-native'
 import { Asset } from 'expo-asset'

@@ -7,11 +7,13 @@ const config = getDefaultConfig(__dirname);
 // on web builds. Classic file resolution handles this correctly.
 config.resolver.unstable_enablePackageExports = false;
 
-// bochas 3D (ago 2026): Metro no trata .fbx/.glb como asset por default,
-// así que require('bocha_pool.fbx') fallaba al intentar parsearlo como
-// código. .glb agregado al migrar de FBXLoader a GLTFLoader (bug de
-// indexado de UVs específico de FBXLoader con este archivo, confirmado:
-// el mesh se ve bien en Blender, mal solo al pasar por FBXLoader).
-config.resolver.assetExts.push('fbx', 'glb');
+// bochas 3D (ago 2026): Metro no trata .glb como asset por default, así
+// que require('bocha_pool.glb') fallaba al intentar parsearlo como código.
+// Ya no incluye 'fbx': se migró de FBXLoader a GLTFLoader y el .fbx viejo
+// se borró — tenerlo junto al .glb con el mismo nombre base rompía el
+// build standalone (Gradle: "Duplicate resources", ambos colapsan al mismo
+// nombre de recurso Android sin extensión; Expo Go nunca lo mostró porque
+// esa conversión a recursos nativos solo pasa en builds standalone/EAS).
+config.resolver.assetExts.push('glb');
 
 module.exports = config;
