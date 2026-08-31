@@ -43,9 +43,27 @@ const ASSETS_TEXTURA: Record<number, number> = {
   15: require('../../../assets/pool-assets/bochas/15.jpg'),
 }
 
+// Bug real (ago 2026, build standalone): en Expo Go, un asset resuelve a
+// un `file://...` real en la caché local y `File(uri).arrayBuffer()`
+// (expo-file-system) lo lee bien — así se probó extensamente toda esta
+// sesión. Pero en un build standalone (EAS), los assets bundleados quedan
+// COMPILADOS como recurso nativo del APK (la misma razón del bug real de
+// "Duplicate resources" fbx/glb ya arreglado en metro.config.js) y
+// `asset.localUri` termina siendo una URI que `File` rechaza con
+// "URI is not absolute" — el `.glb`/las texturas nunca cargaban, sin
+// ninguna bocha visible (ni siquiera negra: cargarPlantillaBocha fallaba
+// antes de armar ninguna malla). `fetch()` sí sabe resolver ese esquema
+// (el fetch de React Native usa OkHttp en Android, que entiende recursos
+// bundleados del APK, no solo http/https) — se intenta primero el camino
+// ya confirmado (File) y se cae a fetch solo si ese falla, para no romper
+// el caso de Expo Go que sí funciona.
 async function leerArrayBuffer(uri: string): Promise<ArrayBuffer> {
   if (Platform.OS === 'web') return fetch(uri).then(r => r.arrayBuffer())
-  return new File(uri).arrayBuffer()
+  try {
+    return await new File(uri).arrayBuffer()
+  } catch {
+    return fetch(uri).then(r => r.arrayBuffer())
+  }
 }
 
 // Bug real (ago 2026): en NATIVE, la convención {localUri} que espera el
