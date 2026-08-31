@@ -10,7 +10,7 @@
 // (después de LoadSkiaWeb). No importar directo desde pantallas.
 
 import {
-  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval, Path, Rect,
+  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Path, Rect,
   SkPath, useImage, vec,
 } from '@shopify/react-native-skia'
 import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS, limitesJuego } from '@/lib/pool/fisica'
@@ -19,7 +19,6 @@ import { MESA_DEFAULT, MesaSkinId } from '@/lib/pool/skins'
 import { ASSET_MESA, TransformMesa } from '@/lib/pool/mesaGeometria'
 import { TrayectoriaGuia } from '@/lib/pool/guia'
 import { Bola } from '@/lib/pool/tipos'
-import type { BolaCayendo, BolaPosicionada } from './MesaPoolBochas3D'
 
 export interface MesaPoolFondoProps {
   tf: TransformMesa
@@ -31,40 +30,11 @@ export interface MesaPoolFondoProps {
   nivelAsistencia: NivelAsistencia
   longitudGuiaObjetivo: number
   trayectoriaSugerida: TrayectoriaGuia | null
-  // sombra de contacto (Fase D del plan de bochas 3D, ago 2026): mismas
-  // posiciones que consume MesaPoolBochas3D, para que la sombra 2D quede
-  // sincronizada cuadro a cuadro con la bocha 3D de la capa de arriba.
-  dibujables: BolaPosicionada[]
-  cayendo: BolaCayendo[]
-}
-
-// elipse suave desplazada bajo una bocha — la mesa es 2D y no puede recibir
-// una sombra proyectada real desde la capa 3D, así que se simula acá con la
-// misma posición en pantalla. Desplazamiento hacia abajo-izquierda, como si
-// la luz viniera de arriba a la derecha (confirmado a ojo por el usuario,
-// ago 2026) — no es un cálculo físico, es una sombra de utilería.
-//
-// TEMPORAL (perf, ago 2026): BlurMask sacado a modo de experimento — el
-// jefe reportó traba real en Android con varias bochas chocando/tiros
-// fuertes, medida con dumpsys gfxinfo (8.31% de frames "janky"); un blur
-// de Skia por bocha, recalculado cada frame para hasta 16 bochas, es
-// sospechoso #1 (es de las operaciones más caras de Skia). Si esto no
-// alcanza, el siguiente sospechoso son las 3 capas gráficas separadas
-// (2 Skia + 1 GLView) que la app compone cada frame.
-function SombraBocha({ tf, cx, cy, escala = 1 }: { tf: TransformMesa; cx: number; cy: number; escala?: number }) {
-  const ancho = tf.radioBolaPx * 1.9 * escala
-  const alto = tf.radioBolaPx * 1.5 * escala
-  const cxSombra = cx - tf.radioBolaPx * 0.45 * escala
-  const cySombra = cy + tf.radioBolaPx * 0.42 * escala
-  return (
-    <Oval x={cxSombra - ancho / 2} y={cySombra - alto / 2} width={ancho} height={alto} color="rgba(0,0,0,0.26)" />
-  )
 }
 
 export default function MesaPoolFondo({
   tf, mesaSkin = MESA_DEFAULT, debug = false, octagono,
   trayectoria, objetivo, nivelAsistencia, longitudGuiaObjetivo, trayectoriaSugerida,
-  dibujables, cayendo,
 }: MesaPoolFondoProps) {
   const R = PARAMETROS.radioBola
   // las variantes se cargan siempre (reglas de hooks: no se puede llamar
@@ -96,20 +66,6 @@ export default function MesaPoolFondo({
           />
         </Group>
       )}
-
-      {/* sombra de contacto (Fase D del plan de bochas 3D, ago 2026): una
-          por cada bocha viva, más una por cada bocha cayendo en una tronera
-          (se achica junto con ella, mismo criterio que usa la capa 3D). */}
-      <Group>
-        {dibujables.map(b => {
-          const p = tf.aPantalla({ x: b.x, y: b.y })
-          return <SombraBocha key={b.n} tf={tf} cx={p.x} cy={p.y} />
-        })}
-        {cayendo.map(c => {
-          const p = tf.aPantalla({ x: c.x, y: c.y })
-          return <SombraBocha key={`cae-${c.n}`} tf={tf} cx={p.x} cy={p.y} escala={c.escala} />
-        })}
-      </Group>
 
       {/* DEBUG temporal: geometría invisible de colisión sobre la mesa real.
           El borde verde es el mismo octágono (verticesOctagonoMesa) que ANTES
