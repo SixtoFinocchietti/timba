@@ -21,26 +21,29 @@ import * as jpegJs from 'jpeg-js'
 import { decodificarPNG } from './decodificarPNG'
 
 const ASSET_GLB = require('../../../assets/pool-assets/bochas/bocha_pool.glb')
-const ASSET_BRILLO = require('../../../assets/pool-assets/bochas/brillo.png')
+// .dat, no .png — ver la nota junto a 'dat' en metro.config.js (bug real
+// de build standalone: jpg/png se compilan como recurso "drawable" de
+// Android, no legible por bytes; .dat cae en "raw", igual que el .glb).
+const ASSET_BRILLO = require('../../../assets/pool-assets/bochas/brillo.dat')
 
-// 0 = blanca; 1-15 = numeradas
+// 0 = blanca; 1-15 = numeradas — .dat, no .jpg (ver nota junto a ASSET_BRILLO)
 const ASSETS_TEXTURA: Record<number, number> = {
-  0: require('../../../assets/pool-assets/bochas/blanca.jpg'),
-  1: require('../../../assets/pool-assets/bochas/1.jpg'),
-  2: require('../../../assets/pool-assets/bochas/2.jpg'),
-  3: require('../../../assets/pool-assets/bochas/3.jpg'),
-  4: require('../../../assets/pool-assets/bochas/4.jpg'),
-  5: require('../../../assets/pool-assets/bochas/5.jpg'),
-  6: require('../../../assets/pool-assets/bochas/6.jpg'),
-  7: require('../../../assets/pool-assets/bochas/7.jpg'),
-  8: require('../../../assets/pool-assets/bochas/8.jpg'),
-  9: require('../../../assets/pool-assets/bochas/9.jpg'),
-  10: require('../../../assets/pool-assets/bochas/10.jpg'),
-  11: require('../../../assets/pool-assets/bochas/11.jpg'),
-  12: require('../../../assets/pool-assets/bochas/12.jpg'),
-  13: require('../../../assets/pool-assets/bochas/13.jpg'),
-  14: require('../../../assets/pool-assets/bochas/14.jpg'),
-  15: require('../../../assets/pool-assets/bochas/15.jpg'),
+  0: require('../../../assets/pool-assets/bochas/blanca.dat'),
+  1: require('../../../assets/pool-assets/bochas/1.dat'),
+  2: require('../../../assets/pool-assets/bochas/2.dat'),
+  3: require('../../../assets/pool-assets/bochas/3.dat'),
+  4: require('../../../assets/pool-assets/bochas/4.dat'),
+  5: require('../../../assets/pool-assets/bochas/5.dat'),
+  6: require('../../../assets/pool-assets/bochas/6.dat'),
+  7: require('../../../assets/pool-assets/bochas/7.dat'),
+  8: require('../../../assets/pool-assets/bochas/8.dat'),
+  9: require('../../../assets/pool-assets/bochas/9.dat'),
+  10: require('../../../assets/pool-assets/bochas/10.dat'),
+  11: require('../../../assets/pool-assets/bochas/11.dat'),
+  12: require('../../../assets/pool-assets/bochas/12.dat'),
+  13: require('../../../assets/pool-assets/bochas/13.dat'),
+  14: require('../../../assets/pool-assets/bochas/14.dat'),
+  15: require('../../../assets/pool-assets/bochas/15.dat'),
 }
 
 // Bug real (ago 2026, build standalone): en Expo Go, un asset resuelve a
