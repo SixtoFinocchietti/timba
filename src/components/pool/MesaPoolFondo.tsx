@@ -10,7 +10,7 @@
 // (después de LoadSkiaWeb). No importar directo desde pantallas.
 
 import {
-  BlurMask, Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval, Path, Rect,
+  Canvas, Circle, DashPathEffect, Group, Image as SkiaImage, Line, Oval, Path, Rect,
   SkPath, useImage, vec,
 } from '@shopify/react-native-skia'
 import { PARAMETROS, POSTES, RADIO_COLISION_POSTE, TRONERAS, limitesJuego } from '@/lib/pool/fisica'
@@ -43,15 +43,21 @@ export interface MesaPoolFondoProps {
 // misma posición en pantalla. Desplazamiento hacia abajo-izquierda, como si
 // la luz viniera de arriba a la derecha (confirmado a ojo por el usuario,
 // ago 2026) — no es un cálculo físico, es una sombra de utilería.
+//
+// TEMPORAL (perf, ago 2026): BlurMask sacado a modo de experimento — el
+// jefe reportó traba real en Android con varias bochas chocando/tiros
+// fuertes, medida con dumpsys gfxinfo (8.31% de frames "janky"); un blur
+// de Skia por bocha, recalculado cada frame para hasta 16 bochas, es
+// sospechoso #1 (es de las operaciones más caras de Skia). Si esto no
+// alcanza, el siguiente sospechoso son las 3 capas gráficas separadas
+// (2 Skia + 1 GLView) que la app compone cada frame.
 function SombraBocha({ tf, cx, cy, escala = 1 }: { tf: TransformMesa; cx: number; cy: number; escala?: number }) {
   const ancho = tf.radioBolaPx * 1.9 * escala
   const alto = tf.radioBolaPx * 1.5 * escala
   const cxSombra = cx - tf.radioBolaPx * 0.45 * escala
   const cySombra = cy + tf.radioBolaPx * 0.42 * escala
   return (
-    <Oval x={cxSombra - ancho / 2} y={cySombra - alto / 2} width={ancho} height={alto} color="rgba(0,0,0,0.32)">
-      <BlurMask blur={tf.radioBolaPx * 0.22 * escala} style="normal" />
-    </Oval>
+    <Oval x={cxSombra - ancho / 2} y={cySombra - alto / 2} width={ancho} height={alto} color="rgba(0,0,0,0.26)" />
   )
 }
 
