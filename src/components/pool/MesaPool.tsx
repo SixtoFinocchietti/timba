@@ -163,8 +163,6 @@ export default function MesaPool({
         nivelAsistencia={nivelAsistencia}
         longitudGuiaObjetivo={longitudGuiaObjetivo}
         trayectoriaSugerida={trayectoriaSugerida}
-        dibujables={dibujables}
-        cayendo={cayendo}
       />
       <MesaPoolBochas3D tf={tf} dibujables={dibujables} cayendo={cayendo} />
       <MesaPoolFrente

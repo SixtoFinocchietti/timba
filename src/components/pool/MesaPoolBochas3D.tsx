@@ -25,7 +25,7 @@ import { useEffect, useRef, useState } from 'react'
 import { StyleSheet } from 'react-native'
 import { GLView, type ExpoWebGLRenderingContext } from 'expo-gl'
 import * as THREE from 'three'
-import { cargarPlantillaBocha, cargarMaterialBola, cargarMaterialBrillo } from '@/lib/pool/bochas3d'
+import { cargarPlantillaBocha, cargarMaterialBola, cargarMaterialBrillo, cargarMaterialSombra } from '@/lib/pool/bochas3d'
 import { TransformMesa } from '@/lib/pool/mesaGeometria'
 
 export interface BolaPosicionada { n: number; x: number; y: number; qx: number; qy: number; qz: number; qw: number }
@@ -161,6 +161,9 @@ export default function MesaPoolBochas3D({ tf, dibujables, cayendo }: Props) {
       // módulo) por el mismo motivo que cargarMaterialBola: reusar un
       // Texture entre contextos WebGL distintos lo deja sin datos.
       const materialBrillo = await cargarMaterialBrillo()
+      // materialSombra/geometriaSombra: mismo criterio que materialBrillo —
+      // una sola vez por contexto, compartida entre las 16 bochas.
+      const materialSombra = await cargarMaterialSombra()
       // diametroCrudo: cargarPlantillaBocha() NO hornea escalaUnidad en
       // "grupo" (a propósito, ver su historial más abajo) — el mesh de
       // "nucleo" mide lo que mida el .glb en sus propias unidades, no
@@ -180,6 +183,13 @@ export default function MesaPoolBochas3D({ tf, dibujables, cayendo }: Props) {
       // número para agrandar/achicar el plano sin tocar nada más.
       const ESCALA_BRILLO = 1.0
       const geometriaBrillo = new THREE.PlaneGeometry(diametroCrudo * ESCALA_BRILLO, diametroCrudo * ESCALA_BRILLO)
+      // sombra.dat comparte geometría con brillo.dat a propósito: salió de
+      // agarrar brillo v2.png (el intento fallido de combinar brillo+sombra
+      // en una sola textura, ver historial de cargarMaterialSombra) y
+      // borrarle la parte de brillo — mismo lienzo cuadrado 1:1, mismo
+      // centrado sobre la bocha. El desplazamiento diagonal (luz
+      // arriba-derecha) ya viene pintado adentro de la imagen, así que el
+      // plano NO lleva offset de posición en x/y, solo en z.
 
       const mallas = new Map<number, MallaBola>()
       for (let n = 0; n <= 15; n++) {
@@ -207,12 +217,22 @@ export default function MesaPoolBochas3D({ tf, dibujables, cayendo }: Props) {
         const brillo = new THREE.Mesh(geometriaBrillo, materialBrillo)
         brillo.position.z = (diametroCrudo / 2) * 1.1
 
+        // sombra: mismo plano/tamaño que brillo (geometriaBrillo, ver nota
+        // arriba), pero DETRÁS de la esfera (Z negativo, brillo usa
+        // positivo) — ver la nota junto a cargarMaterialSombra sobre por
+        // qué no puede ser la misma textura/plano que brillo. Tampoco
+        // cuelga de giro, por la misma razón que brillo: no debe rotar con
+        // la bocha.
+        const sombra = new THREE.Mesh(geometriaBrillo, materialSombra)
+        sombra.position.z = -(diametroCrudo / 2) * 1.1
+
         // instancia es lo único que actualizar() escala/posiciona — nunca
         // rota, así el tamaño final sale de UNA sola cuenta (diametroPx *
         // escalaUnidad) en vez de depender de qué scale haya quedado pisado
-        // o compuesto en un clon previo, y el brillo queda clavado en
-        // pantalla pase lo que pase con giro.
+        // o compuesto en un clon previo, y el brillo/sombra quedan clavados
+        // en pantalla pase lo que pase con giro.
         const instancia = new THREE.Group()
+        instancia.add(sombra)
         instancia.add(giro)
         instancia.add(brillo)
         instancia.visible = false

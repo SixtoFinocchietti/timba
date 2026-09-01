@@ -1,16 +1,16 @@
-// Carga de assets 3D de las bochas (FBX + texturas + material) — Fase B
+// Carga de assets 3D de las bochas (GLB + texturas + material) — Fase B
 // del plan de bochas 3D (ago 2026, ver
 // C:\Users\sixto\.claude\plans\robust-popping-koala.md). Todo cacheado a
 // nivel de módulo (una promesa por recurso): la geometría y las 16
 // texturas se cargan UNA sola vez por sesión de la app — sin esto, entrar
 // y salir de la mesa de pool (practica/bot/online) rehace el fetch +
-// parseo del FBX y las 16 texturas cada vez, con el flash de carga que eso
+// parseo del GLB y las 16 texturas cada vez, con el flash de carga que eso
 // implica.
 //
-// El material vive acá (no en debug-bocha3d.tsx ni en MesaPoolBochas3D)
-// para que cualquier ajuste futuro de "brillo" se aplique en un solo lugar
-// y no se desincronicen — ver la nota junto a cargarMaterialBola sobre por
-// qué es MeshStandardMaterial y no MeshPhysicalMaterial+clearcoat.
+// El material vive acá (no en MesaPoolBochas3D) para que cualquier ajuste
+// futuro de "brillo" se aplique en un solo lugar y no se desincronicen —
+// ver la nota junto a cargarMaterialBola sobre por qué es
+// MeshStandardMaterial y no MeshPhysicalMaterial+clearcoat.
 
 import { Platform } from 'react-native'
 import { Asset } from 'expo-asset'
@@ -21,31 +21,59 @@ import * as jpegJs from 'jpeg-js'
 import { decodificarPNG } from './decodificarPNG'
 
 const ASSET_GLB = require('../../../assets/pool-assets/bochas/bocha_pool.glb')
-const ASSET_BRILLO = require('../../../assets/pool-assets/bochas/brillo.png')
+// .dat, no .png — ver la nota junto a 'dat' en metro.config.js (bug real
+// de build standalone: jpg/png se compilan como recurso "drawable" de
+// Android, no legible por bytes; .dat cae en "raw", igual que el .glb).
+const ASSET_BRILLO = require('../../../assets/pool-assets/bochas/brillo.dat')
+// sombra.dat: recortado de brillo v2.png (el intento de combinar brillo +
+// sombra en una sola textura) borrando la parte de brillo — mismo lienzo
+// 1:1 que brillo.dat, mismo centrado. Re-exportado sin entrelazar, igual
+// que brillo.dat (ver su nota más abajo). Ver la nota junto a
+// cargarMaterialSombra sobre por qué es un plano aparte, no horneado en
+// brillo.dat.
+const ASSET_SOMBRA = require('../../../assets/pool-assets/bochas/sombra.dat')
 
-// 0 = blanca; 1-15 = numeradas
+// 0 = blanca; 1-15 = numeradas — .dat, no .jpg (ver nota junto a ASSET_BRILLO)
 const ASSETS_TEXTURA: Record<number, number> = {
-  0: require('../../../assets/pool-assets/bochas/blanca.jpg'),
-  1: require('../../../assets/pool-assets/bochas/1.jpg'),
-  2: require('../../../assets/pool-assets/bochas/2.jpg'),
-  3: require('../../../assets/pool-assets/bochas/3.jpg'),
-  4: require('../../../assets/pool-assets/bochas/4.jpg'),
-  5: require('../../../assets/pool-assets/bochas/5.jpg'),
-  6: require('../../../assets/pool-assets/bochas/6.jpg'),
-  7: require('../../../assets/pool-assets/bochas/7.jpg'),
-  8: require('../../../assets/pool-assets/bochas/8.jpg'),
-  9: require('../../../assets/pool-assets/bochas/9.jpg'),
-  10: require('../../../assets/pool-assets/bochas/10.jpg'),
-  11: require('../../../assets/pool-assets/bochas/11.jpg'),
-  12: require('../../../assets/pool-assets/bochas/12.jpg'),
-  13: require('../../../assets/pool-assets/bochas/13.jpg'),
-  14: require('../../../assets/pool-assets/bochas/14.jpg'),
-  15: require('../../../assets/pool-assets/bochas/15.jpg'),
+  0: require('../../../assets/pool-assets/bochas/blanca.dat'),
+  1: require('../../../assets/pool-assets/bochas/1.dat'),
+  2: require('../../../assets/pool-assets/bochas/2.dat'),
+  3: require('../../../assets/pool-assets/bochas/3.dat'),
+  4: require('../../../assets/pool-assets/bochas/4.dat'),
+  5: require('../../../assets/pool-assets/bochas/5.dat'),
+  6: require('../../../assets/pool-assets/bochas/6.dat'),
+  7: require('../../../assets/pool-assets/bochas/7.dat'),
+  8: require('../../../assets/pool-assets/bochas/8.dat'),
+  9: require('../../../assets/pool-assets/bochas/9.dat'),
+  10: require('../../../assets/pool-assets/bochas/10.dat'),
+  11: require('../../../assets/pool-assets/bochas/11.dat'),
+  12: require('../../../assets/pool-assets/bochas/12.dat'),
+  13: require('../../../assets/pool-assets/bochas/13.dat'),
+  14: require('../../../assets/pool-assets/bochas/14.dat'),
+  15: require('../../../assets/pool-assets/bochas/15.dat'),
 }
 
+// Bug real (ago 2026, build standalone): en Expo Go, un asset resuelve a
+// un `file://...` real en la caché local y `File(uri).arrayBuffer()`
+// (expo-file-system) lo lee bien — así se probó extensamente toda esta
+// sesión. Pero en un build standalone (EAS), los assets bundleados quedan
+// COMPILADOS como recurso nativo del APK (la misma razón del bug real de
+// "Duplicate resources" fbx/glb ya arreglado en metro.config.js) y
+// `asset.localUri` termina siendo una URI que `File` rechaza con
+// "URI is not absolute" — el `.glb`/las texturas nunca cargaban, sin
+// ninguna bocha visible (ni siquiera negra: cargarPlantillaBocha fallaba
+// antes de armar ninguna malla). `fetch()` sí sabe resolver ese esquema
+// (el fetch de React Native usa OkHttp en Android, que entiende recursos
+// bundleados del APK, no solo http/https) — se intenta primero el camino
+// ya confirmado (File) y se cae a fetch solo si ese falla, para no romper
+// el caso de Expo Go que sí funciona.
 async function leerArrayBuffer(uri: string): Promise<ArrayBuffer> {
   if (Platform.OS === 'web') return fetch(uri).then(r => r.arrayBuffer())
-  return new File(uri).arrayBuffer()
+  try {
+    return await new File(uri).arrayBuffer()
+  } catch {
+    return fetch(uri).then(r => r.arrayBuffer())
+  }
 }
 
 // Bug real (ago 2026): en NATIVE, la convención {localUri} que espera el
@@ -287,5 +315,52 @@ export async function cargarMaterialBrillo(): Promise<THREE.MeshBasicMaterial> {
   // la normal del plano debe estar mirando para el otro lado en este
   // sistema de coordenadas. DoubleSide lo dibuja de cualquier manera, sin
   // depender de a qué lado termine apuntando la normal.
+  return new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, side: THREE.DoubleSide })
+}
+
+let promesaUriSombra: Promise<string> | null = null
+
+function cargarUriSombra(): Promise<string> {
+  if (!promesaUriSombra) {
+    promesaUriSombra = (async () => {
+      const asset = Asset.fromModule(ASSET_SOMBRA)
+      await asset.downloadAsync()
+      return asset.localUri ?? asset.uri
+    })()
+  }
+  return promesaUriSombra
+}
+
+// Sombra de contacto (ago 2026, segundo intento): ANTES vivía en la capa
+// Skia 2D (un Oval por bola, redibujado cada frame) — se sacó por costo de
+// render, con la idea de hornearla junto al brillo en un solo plano 3D fijo
+// delante de la bocha (la cámara ortográfica garantiza que la posición en
+// pantalla de un plano no depende de su Z, así que "delante" o "detrás" no
+// debería importar para UNA bocha aislada). Bug real encontrado recién:
+// con varias bochas, ese plano combinado quedaba SIEMPRE delante de
+// CUALQUIER otra bocha en el z-test (mismo offset de Z para las 16, todas
+// a la misma altura de mesa) — la sombra de una bocha tapaba a otra bocha
+// que en los hechos estaba más cerca de cámara, nada realista.
+//
+// Fix: sombra vuelve a ser un plano APARTE de brillo (no la misma
+// textura), pero se queda en 3D — nada de volver a Skia. La diferencia
+// clave respecto del brillo: se posiciona DETRÁS de la esfera (Z negativo
+// en vez de positivo, ver MesaPoolBochas3D) en vez de delante. Como todas
+// las bochas están a la misma altura de mesa, esto le da al z-test lo que
+// necesita: el frente de CUALQUIER bocha (Z positivo) va a estar siempre
+// más cerca de cámara que la sombra de CUALQUIER otra bocha (Z negativo),
+// así que una bocha por delante tapa correctamente la sombra de la bocha
+// de atrás — y la propia bocha sigue tapando el centro de su propia
+// sombra (correcto: una sombra de contacto real no se ve justo debajo del
+// objeto que la proyecta, sólo alrededor).
+//
+// La imagen (sombra.dat) es el mismo lienzo 1:1 y el mismo desplazamiento
+// diagonal que tenía brillo v2.png, sólo que sin la parte de brillo —
+// el degradé y el offset ya vienen horneados en la textura, así que no
+// cuestan nada por frame (a diferencia del BlurMask de Skia que se sacó
+// antes por lento).
+export async function cargarMaterialSombra(): Promise<THREE.MeshBasicMaterial> {
+  const uri = await cargarUriSombra()
+  const map = await cargarTexturaDesdeUri(uri, 'png')
   return new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, side: THREE.DoubleSide })
 }
