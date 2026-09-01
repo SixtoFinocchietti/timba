@@ -25,6 +25,13 @@ const ASSET_GLB = require('../../../assets/pool-assets/bochas/bocha_pool.glb')
 // de build standalone: jpg/png se compilan como recurso "drawable" de
 // Android, no legible por bytes; .dat cae en "raw", igual que el .glb).
 const ASSET_BRILLO = require('../../../assets/pool-assets/bochas/brillo.dat')
+// sombra.dat: recortado de brillo v2.png (el intento de combinar brillo +
+// sombra en una sola textura) borrando la parte de brillo — mismo lienzo
+// 1:1 que brillo.dat, mismo centrado. Re-exportado sin entrelazar, igual
+// que brillo.dat (ver su nota más abajo). Ver la nota junto a
+// cargarMaterialSombra sobre por qué es un plano aparte, no horneado en
+// brillo.dat.
+const ASSET_SOMBRA = require('../../../assets/pool-assets/bochas/sombra.dat')
 
 // 0 = blanca; 1-15 = numeradas — .dat, no .jpg (ver nota junto a ASSET_BRILLO)
 const ASSETS_TEXTURA: Record<number, number> = {
@@ -308,5 +315,52 @@ export async function cargarMaterialBrillo(): Promise<THREE.MeshBasicMaterial> {
   // la normal del plano debe estar mirando para el otro lado en este
   // sistema de coordenadas. DoubleSide lo dibuja de cualquier manera, sin
   // depender de a qué lado termine apuntando la normal.
+  return new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, side: THREE.DoubleSide })
+}
+
+let promesaUriSombra: Promise<string> | null = null
+
+function cargarUriSombra(): Promise<string> {
+  if (!promesaUriSombra) {
+    promesaUriSombra = (async () => {
+      const asset = Asset.fromModule(ASSET_SOMBRA)
+      await asset.downloadAsync()
+      return asset.localUri ?? asset.uri
+    })()
+  }
+  return promesaUriSombra
+}
+
+// Sombra de contacto (ago 2026, segundo intento): ANTES vivía en la capa
+// Skia 2D (un Oval por bola, redibujado cada frame) — se sacó por costo de
+// render, con la idea de hornearla junto al brillo en un solo plano 3D fijo
+// delante de la bocha (la cámara ortográfica garantiza que la posición en
+// pantalla de un plano no depende de su Z, así que "delante" o "detrás" no
+// debería importar para UNA bocha aislada). Bug real encontrado recién:
+// con varias bochas, ese plano combinado quedaba SIEMPRE delante de
+// CUALQUIER otra bocha en el z-test (mismo offset de Z para las 16, todas
+// a la misma altura de mesa) — la sombra de una bocha tapaba a otra bocha
+// que en los hechos estaba más cerca de cámara, nada realista.
+//
+// Fix: sombra vuelve a ser un plano APARTE de brillo (no la misma
+// textura), pero se queda en 3D — nada de volver a Skia. La diferencia
+// clave respecto del brillo: se posiciona DETRÁS de la esfera (Z negativo
+// en vez de positivo, ver MesaPoolBochas3D) en vez de delante. Como todas
+// las bochas están a la misma altura de mesa, esto le da al z-test lo que
+// necesita: el frente de CUALQUIER bocha (Z positivo) va a estar siempre
+// más cerca de cámara que la sombra de CUALQUIER otra bocha (Z negativo),
+// así que una bocha por delante tapa correctamente la sombra de la bocha
+// de atrás — y la propia bocha sigue tapando el centro de su propia
+// sombra (correcto: una sombra de contacto real no se ve justo debajo del
+// objeto que la proyecta, sólo alrededor).
+//
+// La imagen (sombra.dat) es el mismo lienzo 1:1 y el mismo desplazamiento
+// diagonal que tenía brillo v2.png, sólo que sin la parte de brillo —
+// el degradé y el offset ya vienen horneados en la textura, así que no
+// cuestan nada por frame (a diferencia del BlurMask de Skia que se sacó
+// antes por lento).
+export async function cargarMaterialSombra(): Promise<THREE.MeshBasicMaterial> {
+  const uri = await cargarUriSombra()
+  const map = await cargarTexturaDesdeUri(uri, 'png')
   return new THREE.MeshBasicMaterial({ map, transparent: true, depthWrite: false, side: THREE.DoubleSide })
 }
